@@ -1,0 +1,3232 @@
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { 
+  LayoutDashboard, 
+  Calendar, 
+  HeartHandshake, 
+  Wrench, 
+  PieChart, 
+  Droplets, 
+  Shirt, 
+  Users, 
+  ClipboardList, 
+  LogOut, 
+  Plus, 
+  Minus,
+  Search, 
+  Edit2, 
+  Trash2, 
+  MapPin, 
+  FileText, 
+  Printer, 
+  ChevronDown,
+  Menu,
+  X,
+  Bell,
+  UserCircle,
+  Eye,
+  Download,
+  Tag,
+  AlignLeft,
+  Navigation,
+  Send,
+  User,
+  AlertCircle,
+  CheckCircle,
+  Settings,
+  Map as MapIcon,
+  Phone
+} from 'lucide-react';
+import { 
+  BarChart, 
+  Bar, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip as RechartsTooltip, 
+  ResponsiveContainer, 
+  PieChart as RePie, 
+  Pie, 
+  Cell,
+  Legend
+} from 'recharts';
+
+// --- Constants & Initial Data ---
+
+const APP_VERSION = "1.0.6"; // อัปเดตเวอร์ชั่นเปลี่ยนชื่อเมนูเป็นรับเรื่องร้องทุกข์
+
+const THEME = {
+  navy: '#1a3a8a',
+  gold: '#d4a843',
+  white: '#ffffff',
+  gray: '#f3f4f6'
+};
+
+const INITIAL_USERS = [
+  { id: 1, name: 'ผู้ดูแลระบบ', username: 'admin', password: 'admin', role: 'admin', center: 'ศูนย์กลาง', permissions: ['dashboard', 'activities', 'support', 'repairs', 'budget', 'water', 'water_add', 'water_edit', 'water_delete', 'uniform', 'users', 'logs'] },
+  { id: 2, name: 'สตม.พังโคน', username: 'user1', password: '1234', role: 'user', center: 'พังโคน', permissions: ['dashboard', 'activities', 'support', 'water'] },
+  { id: 3, name: 'สตม.เจริญศิลป์', username: 'user2', password: '1234', role: 'user', center: 'เจริญศิลป์', permissions: ['dashboard', 'activities', 'support', 'water'] },
+  { id: 4, name: 'สตม.วานรนิวาส', username: 'user3', password: '1234', role: 'user', center: 'วานรนิวาส', permissions: ['dashboard', 'activities', 'support', 'water'] },
+];
+
+const LOCATIONS = [
+  { name: 'พังโคน', subDistricts: ['พังโคน', 'ม่วงไข่', 'แร่', 'ไฮหย่อง', 'ต้นผึ้ง'] },
+  { name: 'เจริญศิลป์', subDistricts: ['เจริญศิลป์', 'ทุ่งแก', 'โคกสะอาด', 'หนองแปน', 'บ้านเหล่า'] },
+  { name: 'วานรนิวาส', subDistricts: ['วานรนิวาส', 'เดื่อศรีคันไชย', 'ขัวก่าย', 'หนองสนม', 'กุดเรือคำ'] },
+];
+
+// --- Helper Functions ---
+
+const formatDate = (dateStr) => {
+  if (!dateStr) return '-';
+  const d = new Date(dateStr);
+  return d.toLocaleDateString('th-TH', { day: '2-digit', month: '2-digit', year: 'numeric' });
+};
+
+const formatDateTime = (date) => {
+  return new Date(date).toLocaleString('th-TH');
+};
+
+// --- Leaflet Global Loader ---
+let isLeafletLoading = false;
+let leafletCallbacks = [];
+
+const loadLeaflet = (callback) => {
+  if (window.L) {
+    callback();
+    return;
+  }
+  leafletCallbacks.push(callback);
+  
+  if (isLeafletLoading) return;
+  isLeafletLoading = true;
+
+  const link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css';
+  document.head.appendChild(link);
+
+  const script = document.createElement('script');
+  script.src = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js';
+  script.crossOrigin = 'anonymous'; // ช่วยป้องกัน Script error
+  script.onload = () => {
+    isLeafletLoading = false;
+    leafletCallbacks.forEach(cb => cb());
+    leafletCallbacks = [];
+  };
+  script.onerror = () => {
+    console.error('Failed to load Leaflet script');
+    isLeafletLoading = false;
+  };
+  document.head.appendChild(script);
+};
+
+// --- Overview Map Component ---
+const OverviewMapModal = ({ repairs, onClose }) => {
+  const mapRef = useRef(null);
+  const mapInstance = useRef(null);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    loadLeaflet(() => {
+      if (!isMounted || !mapRef.current || mapInstance.current) return;
+
+      const L = window.L;
+      
+      // Default Center (Sakon Nakhon roughly around the 3 districts)
+      const map = L.map(mapRef.current).setView([17.55, 103.75], 10);
+      mapInstance.current = map;
+
+      // Google Maps Hybrid (Satellite + Roads)
+      L.tileLayer('https://mt1.google.com/vt/lyrs=y&hl=th&x={x}&y={y}&z={z}', {
+        attribution: '&copy; Google Maps',
+        maxZoom: 20
+      }).addTo(map);
+
+      // 1. เส้นขอบพื้นที่เขต 6 โดยรวม (รอบนอกเส้นเดียว)
+      const outerBounds = [
+        [18.02, 103.55], [17.98, 103.85], [17.80, 104.05], [17.50, 103.95], 
+        [17.45, 103.85], [17.30, 103.85], [17.25, 103.65], [17.40, 103.50], 
+        [17.55, 103.40], [17.75, 103.45]
+      ];
+      
+      // วาดเส้นขอบสีขาวหนารองพื้น
+      L.polygon(outerBounds, { 
+        color: '#ffffff', weight: 6, fillOpacity: 0, interactive: false 
+      }).addTo(map);
+
+      // วาดเส้นประสีแดงทับเป็นกรอบนอก
+      L.polygon(outerBounds, { 
+        color: '#ef4444', weight: 3, dashArray: '8, 8', fillOpacity: 0, interactive: false 
+      }).addTo(map);
+
+      // 2. พิกัดแบ่งพื้นที่แต่ละอำเภอ (เชื่อมต่อกันพอดี)
+      const wanonBounds = [[18.02, 103.55], [17.98, 103.85], [17.80, 104.05], [17.50, 103.95], [17.45, 103.85], [17.45, 103.65], [17.75, 103.65], [17.75, 103.45]];
+      const charoenBounds = [[17.75, 103.45], [17.75, 103.65], [17.45, 103.65], [17.40, 103.50], [17.55, 103.40]];
+      const phangKhonBounds = [[17.45, 103.65], [17.45, 103.85], [17.30, 103.85], [17.25, 103.65], [17.40, 103.50]];
+
+      // ฟังก์ชันสำหรับวาดพื้นที่ย่อยพร้อมป้ายชื่อ
+      const createDistrictPoly = (bounds, color, label, centerLat, centerLng) => {
+        L.polygon(bounds, {
+          color: color,
+          weight: 3,
+          dashArray: '8, 8',
+          fillColor: color,
+          fillOpacity: 0.1, // สีพื้นหลังบางๆ
+          interactive: false
+        }).addTo(map);
+
+        // ป้ายชื่ออำเภอ (พื้นขาว ตัวหนังสือดำ ตามภาพตัวอย่าง)
+        const labelIcon = L.divIcon({
+          className: 'custom-district-label',
+          html: `<div>${label}</div>`,
+          iconSize: [null, null]
+        });
+        L.marker([centerLat, centerLng], { icon: labelIcon, interactive: false }).addTo(map);
+      };
+
+      // วาด 3 อำเภอ และกำหนดพิกัดจุดกึ่งกลางสำหรับวางป้ายชื่อ
+      createDistrictPoly(wanonBounds, '#3b82f6', 'อ.วานรนิวาส', 17.75, 103.80); // สีฟ้า
+      createDistrictPoly(charoenBounds, '#f59e0b', 'อ.เจริญศิลป์', 17.58, 103.52); // สีส้ม
+      createDistrictPoly(phangKhonBounds, '#ef4444', 'อ.พังโคน', 17.37, 103.70); // สีแดง
+
+      // 3. เพิ่มหมุดพิกัดเรื่องร้องทุกข์
+      const markers = [];
+      repairs.forEach(r => {
+        if (r.lat && r.lng && !isNaN(parseFloat(r.lat)) && !isNaN(parseFloat(r.lng))) {
+          // กำหนดสีตามสถานะ
+          let pinColor = '#f59e0b'; // เหลือง: ยังไม่ดำเนินการ
+          if (r.status === 'กำลังแก้ไข') pinColor = '#3b82f6'; // ฟ้า
+          else if (r.status === 'เสร็จแล้ว') pinColor = '#10b981'; // เขียว
+
+          const icon = L.divIcon({
+            className: 'custom-pin',
+            html: `<div style="background-color: ${pinColor}; width: 24px; height: 24px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); border: 2px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.5);"></div>`,
+            iconSize: [24, 24],
+            iconAnchor: [12, 24],
+            popupAnchor: [0, -24]
+          });
+
+          // เปลี่ยนการใช้ inline JS เป็นคลาส CSS ภายใน <style> เพื่อหลีกเลี่ยง Script error
+          const popupContent = `
+            <style>
+              .map-link-custom { color: #3b82f6; text-decoration: none; display: flex; align-items: center; font-weight: 500; font-size: 11px; transition: color 0.2s; }
+              .map-link-custom:hover { color: #1d4ed8 !important; text-decoration: underline !important; }
+            </style>
+            <div style="font-family: 'Sarabun', sans-serif; min-width: 160px;">
+              <h4 style="font-weight: bold; margin: 0 0 5px 0; color: #1a3a8a; font-size: 14px;">${r.type}</h4>
+              <p style="margin: 0 0 8px 0; font-size: 12px; line-height: 1.4; color: #333;">${r.detail}</p>
+              <div style="font-size: 11px; color: #666; line-height: 1.5;">
+                <b>ผู้แจ้ง:</b> ${r.reporter} <br/>
+                <b>ศูนย์:</b> ${r.center} <br/>
+                <div style="margin-top: 8px; margin-bottom: 8px;">
+                  <span style="display:inline-block; padding: 3px 10px; border-radius: 12px; font-weight:bold; color:white; background-color: ${pinColor}; box-shadow: 0 1px 2px rgba(0,0,0,0.1);">${r.status}</span>
+                </div>
+                <div style="border-top: 1px dashed #e5e7eb; padding-top: 8px;">
+                  <a href="https://www.google.com/maps?q=${r.lat},${r.lng}" target="_blank" rel="noreferrer" class="map-link-custom">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px;"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+                    ${r.lat}, ${r.lng}
+                  </a>
+                </div>
+              </div>
+            </div>
+          `;
+
+          const marker = L.marker([parseFloat(r.lat), parseFloat(r.lng)], { icon }).bindPopup(popupContent).addTo(map);
+          markers.push(marker);
+        }
+      });
+
+      // จัดมุมมองให้ครอบคลุมพื้นที่ทั้งหมดอัตโนมัติ
+      const outerPolygon = L.polygon(outerBounds);
+      if (markers.length > 0) {
+        const allFeaturesGroup = new L.featureGroup([...markers, outerPolygon]);
+        map.fitBounds(allFeaturesGroup.getBounds().pad(0.1));
+      } else {
+        map.fitBounds(outerPolygon.getBounds().pad(0.1));
+      }
+      
+      setTimeout(() => {
+         if (isMounted && mapInstance.current) {
+           mapInstance.current.invalidateSize();
+         }
+      }, 200);
+    });
+
+    return () => {
+      isMounted = false;
+      if (mapInstance.current) {
+        try {
+          mapInstance.current.remove();
+        } catch(e) { console.error(e); }
+        mapInstance.current = null;
+      }
+    };
+  }, [repairs]);
+
+  return (
+    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[200] p-4 sm:p-6 animate-in fade-in duration-200">
+      <div className="bg-white rounded-2xl w-full max-w-6xl overflow-hidden shadow-2xl flex flex-col h-[90vh] animate-in zoom-in-95 duration-200">
+        <div className="p-4 bg-[#1a3a8a] text-white flex justify-between items-center shrink-0">
+          <h3 className="text-lg font-bold flex items-center"><MapIcon size={20} className="mr-2"/> ภาพรวมพื้นที่ เขต 6 (แผนที่รับเรื่องร้องทุกข์)</h3>
+          <button onClick={onClose} className="hover:bg-blue-800 p-1.5 rounded-lg transition-colors"><X size={20}/></button>
+        </div>
+        
+        <div className="p-3 bg-gray-50 flex flex-wrap justify-center sm:justify-start gap-4 border-b shrink-0 text-xs font-medium">
+           <div className="flex items-center"><div className="w-3 h-3 rounded-full bg-amber-500 mr-1.5 border border-white shadow-sm"></div> ยังไม่ดำเนินการ</div>
+           <div className="flex items-center"><div className="w-3 h-3 rounded-full bg-blue-500 mr-1.5 border border-white shadow-sm"></div> กำลังแก้ไข</div>
+           <div className="flex items-center"><div className="w-3 h-3 rounded-full bg-green-500 mr-1.5 border border-white shadow-sm"></div> เสร็จแล้ว</div>
+        </div>
+
+        <div className="flex-1 relative bg-gray-200">
+          <div ref={mapRef} className="absolute inset-0 z-0"></div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
+// --- Inline Map Picker Component ---
+const InlineMapPicker = ({ lat, lng, onLocationChange }) => {
+  const mapRef = useRef(null);
+  const mapInstance = useRef(null);
+  const markerInstance = useRef(null);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    loadLeaflet(() => {
+      if (!isMounted || !mapRef.current || mapInstance.current) return;
+
+      const L = window.L;
+      // Default to Sakon Nakhon area if no coordinates provided
+      const initialLat = lat ? parseFloat(lat) : 17.65;
+      const initialLng = lng ? parseFloat(lng) : 103.88;
+
+      const map = L.map(mapRef.current).setView([initialLat, initialLng], 15);
+      mapInstance.current = map;
+
+      // ใช้แผนที่แบบ Hybrid (ดาวเทียม + เส้นถนน)
+      L.tileLayer('https://mt1.google.com/vt/lyrs=y&hl=th&x={x}&y={y}&z={z}', {
+        attribution: '&copy; Google Maps',
+        maxZoom: 20
+      }).addTo(map);
+
+      // Custom Red Pin matching the UI and screenshot
+      const icon = L.divIcon({
+        className: 'custom-pin',
+        html: '<div style="background-color: #ef4444; width: 24px; height: 24px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); border: 2px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.3);"></div>',
+        iconSize: [24, 24],
+        iconAnchor: [12, 24]
+      });
+
+      const marker = L.marker([initialLat, initialLng], { icon, draggable: true }).addTo(map);
+      markerInstance.current = marker;
+
+      // Update coordinates on drag
+      marker.on('dragend', (e) => {
+        const newPos = e.target.getLatLng();
+        onLocationChange(newPos.lat.toFixed(6), newPos.lng.toFixed(6));
+      });
+
+      // Update coordinates on click
+      map.on('click', (e) => {
+        marker.setLatLng(e.latlng);
+        onLocationChange(e.latlng.lat.toFixed(6), e.latlng.lng.toFixed(6));
+      });
+      
+      // Fix sizing issue inside modal
+      setTimeout(() => {
+         if (isMounted && mapInstance.current) {
+           mapInstance.current.invalidateSize();
+         }
+      }, 200);
+    });
+
+    return () => {
+      isMounted = false;
+      if (mapInstance.current) {
+        try {
+          mapInstance.current.remove();
+        } catch(e) { console.error(e); }
+        mapInstance.current = null;
+      }
+    };
+  }, []);
+
+  // Update marker position externally (e.g., when "Current Location" is clicked)
+  useEffect(() => {
+    if (mapInstance.current && markerInstance.current && lat && lng) {
+      const newLat = parseFloat(lat);
+      const newLng = parseFloat(lng);
+      if (!isNaN(newLat) && !isNaN(newLng)) {
+        const currentPos = markerInstance.current.getLatLng();
+        // ป้องกันการรีเฟรชแผนที่ซ้ำซ้อนเวลาลากหมุด
+        if (Math.abs(currentPos.lat - newLat) > 0.000001 || Math.abs(currentPos.lng - newLng) > 0.000001) {
+          markerInstance.current.setLatLng([newLat, newLng]);
+          mapInstance.current.setView([newLat, newLng], mapInstance.current.getZoom() || 15);
+        }
+      }
+    }
+  }, [lat, lng]);
+
+  return <div ref={mapRef} className="w-full h-full z-0 bg-gray-100"></div>;
+};
+
+
+// --- Main App Component ---
+
+export default function App() {
+  const [currentUser, setCurrentUser] = useState(null);
+  const [currentView, setCurrentView] = useState('dashboard');
+  const [isSidebarOpen, setSidebarOpen] = useState(true);
+  const [authForm, setAuthForm] = useState({ username: '', password: '' });
+  const [toasts, setToasts] = useState([]);
+  
+  // Data States
+  const [activities, setActivities] = useState([
+    { id: 1, date: '2024-03-20', title: 'ประชุมประจำเดือน', detail: 'หารือแนวทางการทำงาน', location: 'พังโคน', subDistrict: 'พังโคน', center: 'พังโคน' },
+    { id: 2, date: '2024-03-21', title: 'โครงการจิตอาสา', detail: 'ทำความสะอาดวัด', location: 'เจริญศิลป์', subDistrict: 'ทุ่งแก', center: 'เจริญศิลป์' }
+  ]);
+  const [supportRecords, setSupportRecords] = useState([
+    { id: 1, type: 'งานศพ', date: '2024-03-15', deceased: 'นายสมชาย ใจดี', localLocation: 'วัดป่าภูริทัตตถิราวาส หมู่ 1', location: 'พังโคน', subDistrict: 'พังโคน', representative: 'ผอ.สมพร', water: 10, wreaths: 1, money: 1000, note: '', center: 'พังโคน' }
+  ]);
+  const [supportTypes, setSupportTypes] = useState(['งานศพ', 'งานบุญ', 'อื่นๆ']); 
+  const [repairs, setRepairs] = useState([
+    { id: 1, date: '2024-03-22', time: '10:00', type: 'ไฟฟ้า/ไฟส่องสว่าง', detail: 'หลอดไฟถนนดับ 2 ดวง หน้าปากซอย', reporter: 'นายสมเกียรติ', phone: '0812345678', location: 'วานรนิวาส', subDistrict: 'วานรนิวาส', lat: 17.3820, lng: 103.7150, status: 'กำลังแก้ไข', center: 'วานรนิวาส' },
+    { id: 2, date: '2024-04-07', time: '13:31', type: 'ประปา/ท่อแตก', detail: 'น้ำประปาหมู่บ้านไม่ไหล บ้านหนองแวง', reporter: 'อสม.จำรอง', phone: '0899954663', location: 'วานรนิวาส', subDistrict: 'ขัวก่าย', lat: 17.6520, lng: 103.8850, status: 'รออนุมัติ', center: 'วานรนิวาส' }
+  ]);
+  const [waterStock, setWaterStock] = useState([
+    { id: 1, date: '2024-03-01', size: '350ml', amount: 100, branch: 'พังโคน', location: 'สนง.', status: 'รับเข้า', center: 'พังโคน' },
+    { id: 2, date: '2024-03-05', size: '350ml', amount: 20, branch: 'พังโคน', location: 'วัดบ้านนา', status: 'เบิกออก', center: 'พังโคน' }
+  ]);
+  const [waterSizes, setWaterSizes] = useState(['350ml', '600ml', '1500ml']);
+  
+  // Uniform States
+  const [uniformStock, setUniformStock] = useState([
+    { id: 1, date: '2024-03-01', type: 'เสื้อโปโล', size: 'L', amount: 50, status: 'รับเข้า', receiver: 'แอดมิน', note: 'สต๊อกตั้งต้น', center: 'ศูนย์กลาง' },
+    { id: 2, date: '2024-03-05', type: 'เสื้อคอกลม', size: 'M', amount: 20, status: 'รับเข้า', receiver: 'แอดมิน', note: '', center: 'พังโคน' },
+    { id: 3, date: '2024-03-10', type: 'เสื้อโปโล', size: 'L', amount: 2, status: 'เบิกออก', receiver: 'นายสมชาย', note: 'ใส่ปฏิบัติงาน', center: 'ศูนย์กลาง' }
+  ]);
+  const [uniformTypes, setUniformTypes] = useState(['เสื้อคอกลม', 'เสื้อคอปก', 'ผ้ากันเปื้อน', 'หมวก']);
+  const [uniformSizes, setUniformSizes] = useState(['S', 'M', 'L', 'XL', 'XXL', 'Free Size']);
+  const [uniformImages, setUniformImages] = useState({}); 
+
+  const [logs, setLogs] = useState([]);
+  const [users, setUsers] = useState(INITIAL_USERS);
+  const [editingItem, setEditingItem] = useState(null);
+  const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, title: '', message: '', onConfirm: null });
+
+  // --- Auth logic ---
+  const handleLogin = (e) => {
+    e.preventDefault();
+    const user = users.find(u => u.username === authForm.username && u.password === authForm.password);
+    if (user) {
+      setCurrentUser(user);
+      addLog(user, 'LOGIN', 'AUTH', `User ${user.username} logged in`);
+      addToast('เข้าสู่ระบบสำเร็จ', 'success');
+    } else {
+      addToast('ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง', 'error');
+    }
+  };
+
+  const handleLogout = () => {
+    addLog(currentUser, 'LOGOUT', 'AUTH', `User ${currentUser.username} logged out`);
+    setCurrentUser(null);
+    setCurrentView('dashboard');
+    addToast('ออกจากระบบแล้ว', 'info');
+  };
+
+  // --- Utility logic ---
+  const addToast = (msg, type = 'info') => {
+    const id = Date.now();
+    // แก้ไขการเซ็ต Toast state เพื่อป้องกันปัญหา stale closure หากกดรัวๆ
+    setToasts(prev => [...prev, { id, msg, type }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3000);
+  };
+
+  const addLog = (user, action, module, detail, before = null, after = null) => {
+    const newLog = {
+      id: Date.now(),
+      timestamp: new Date().toISOString(),
+      user: user?.name || 'System',
+      action,
+      module,
+      detail,
+      before,
+      after
+    };
+    setLogs(prev => [newLog, ...prev]);
+  };
+
+  const requestConfirm = (title, message, onConfirm) => {
+    setConfirmDialog({ isOpen: true, title, message, onConfirm });
+  };
+
+  const filterByCenter = (data) => {
+    if (!currentUser) return [];
+    if (currentUser.role === 'admin') return data;
+    return data.filter(item => item.center === currentUser.center);
+  };
+
+  // --- Components ---
+  const SidebarItem = ({ icon: Icon, label, view, permission }) => {
+    if (!currentUser.permissions.includes(permission)) return null;
+    const active = currentView === view;
+    return (
+      <button
+        onClick={() => setCurrentView(view)}
+        className={`w-full flex items-center space-x-3 px-4 py-3 transition-colors duration-200 ${
+          active ? 'bg-white/10 border-r-4 border-[#d4a843] text-[#d4a843]' : 'text-white/70 hover:bg-white/5 hover:text-white'
+        }`}
+      >
+        <Icon size={20} />
+        <span className="font-medium">{label}</span>
+      </button>
+    );
+  };
+
+  const Card = ({ title, value, icon: Icon, color }) => (
+    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center space-x-4">
+      <div className={`p-4 rounded-full ${color} text-white`}>
+        <Icon size={24} />
+      </div>
+      <div>
+        <p className="text-sm text-gray-500 font-medium">{title}</p>
+        <p className="text-2xl font-bold text-gray-800">{value}</p>
+      </div>
+    </div>
+  );
+
+  // --- Views ---
+  const DashboardView = () => {
+    const filteredActivities = filterByCenter(activities);
+    const filteredUniform = filterByCenter(uniformStock);
+
+    // ยอดรวมน้ำดื่ม
+    let totalWaterStock = 0;
+    if (currentUser.role === 'admin') {
+      const allIn = waterStock.filter(w => w.status === 'รับเข้า').reduce((acc, curr) => acc + Number(curr.amount), 0);
+      const allOut = waterStock.filter(w => w.status === 'เบิกออก').reduce((acc, curr) => acc + Number(curr.amount), 0) + supportRecords.reduce((acc, curr) => acc + Number(curr.water || 0), 0);
+      totalWaterStock = allIn - allOut;
+    } else {
+      const userIn = waterStock.filter(w => w.center === currentUser.center && w.status === 'รับเข้า').reduce((acc, curr) => acc + Number(curr.amount), 0);
+      const userOut = waterStock.filter(w => w.center === currentUser.center && w.status === 'เบิกออก').reduce((acc, curr) => acc + Number(curr.amount), 0) + supportRecords.filter(s => s.center === currentUser.center).reduce((acc, curr) => acc + Number(curr.water || 0), 0);
+      totalWaterStock = userIn - userOut;
+    }
+
+    const ALL_LOCATIONS = [{name: 'ศูนย์กลาง'}, ...LOCATIONS];
+    const waterChartData = ALL_LOCATIONS.map(loc => {
+      const locIn = waterStock.filter(w => w.center === loc.name && w.status === 'รับเข้า').reduce((a, c) => a + Number(c.amount), 0);
+      const locOut = waterStock.filter(w => w.center === loc.name && w.status === 'เบิกออก').reduce((a, c) => a + Number(c.amount), 0) + supportRecords.filter(s => s.center === loc.name).reduce((a, c) => a + Number(c.water || 0), 0);
+      return { name: loc.name, ปริมาณ: locIn - locOut };
+    });
+
+    const uniformTypesSummary = [...new Set(uniformStock.map(u => u.type))];
+    const uniformData = uniformTypesSummary.map((type, idx) => ({
+      name: type,
+      value: uniformStock.filter(u => u.type === type).reduce((acc, curr) => acc + (curr.status === 'รับเข้า' ? Number(curr.amount) : -Number(curr.amount)), 0)
+    }));
+
+    const COLORS = ['#1a3a8a', '#d4a843', '#10b981', '#f59e0b'];
+
+    return (
+      <div className="space-y-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <Card title="กิจกรรมทั้งหมด" value={filteredActivities.length} icon={Calendar} color="bg-blue-600" />
+          <Card title="สนับสนุนกิจกรรม" value={filterByCenter(supportRecords).length} icon={HeartHandshake} color="bg-rose-500" />
+          <Card title="น้ำดื่มคงเหลือ (แพ็ค)" value={totalWaterStock} icon={Droplets} color="bg-sky-500" />
+          <Card title="เครื่องแบบคงเหลือ (ตัว)" value={filteredUniform.reduce((acc, curr) => acc + (curr.status === 'รับเข้า' ? Number(curr.amount) : -Number(curr.amount)), 0)} icon={Shirt} color="bg-amber-500" />
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+            <h3 className="text-lg font-bold mb-4 text-[#1a3a8a]">สรุปน้ำดื่มแต่ละศูนย์</h3>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={waterChartData}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="name" />
+                  <YAxis />
+                  <RechartsTooltip />
+                  <Bar dataKey="ปริมาณ" fill="#1a3a8a" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+            <h3 className="text-lg font-bold mb-4 text-[#1a3a8a]">สรุปเครื่องแบบ</h3>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <RePie>
+                  <Pie
+                    data={uniformData}
+                    innerRadius={60}
+                    outerRadius={80}
+                    paddingAngle={5}
+                    dataKey="value"
+                  >
+                    {uniformData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <RechartsTooltip />
+                  <Legend />
+                </RePie>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="p-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
+            <h3 className="font-bold text-[#1a3a8a]">กิจกรรมล่าสุด</h3>
+            <button onClick={() => setCurrentView('activities')} className="text-sm text-blue-600 hover:underline">ดูทั้งหมด</button>
+          </div>
+          <table className="w-full text-left">
+            <thead className="bg-gray-50 text-xs text-gray-500 uppercase">
+              <tr>
+                <th className="px-6 py-3">วันที่</th>
+                <th className="px-6 py-3">กิจกรรม</th>
+                <th className="px-6 py-3">สถานที่</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {filteredActivities.slice(0, 5).map(act => (
+                <tr key={act.id} className="hover:bg-gray-50">
+                  <td className="px-6 py-4 text-sm">{formatDate(act.date)}</td>
+                  <td className="px-6 py-4 text-sm font-medium">{act.title}</td>
+                  <td className="px-6 py-4 text-sm">{act.location}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  };
+
+  const ActivitiesView = () => {
+    const [searchTerm, setSearchTerm] = useState('');
+    const [isFormOpen, setIsFormOpen] = useState(false);
+    const [form, setForm] = useState({ date: '', title: '', detail: '', location: currentUser?.role === 'admin' ? '' : currentUser?.center, subDistrict: '', center: currentUser?.center || 'ศูนย์กลาง' });
+
+    const filtered = filterByCenter(activities).filter(a => a.title.toLowerCase().includes(searchTerm.toLowerCase()));
+    const availableLocations = currentUser.role === 'admin' ? LOCATIONS : LOCATIONS.filter(l => l.name === currentUser.center);
+
+    const saveActivity = (e) => {
+      e.preventDefault();
+      const newAct = { ...form, id: editingItem?.id || Date.now() };
+      // ป้องกันการบันทึกข้ามศูนย์
+      if (!newAct.center) newAct.center = currentUser.center;
+
+      if (editingItem) {
+        setActivities(activities.map(a => a.id === editingItem.id ? newAct : a));
+        addLog(currentUser, 'UPDATE', 'ACTIVITIES', `Updated activity: ${newAct.title}`, editingItem, newAct);
+      } else {
+        setActivities([newAct, ...activities]);
+        addLog(currentUser, 'CREATE', 'ACTIVITIES', `Created activity: ${newAct.title}`, null, newAct);
+      }
+      setIsFormOpen(false);
+      setEditingItem(null);
+      setForm({ date: '', title: '', detail: '', location: currentUser.role === 'admin' ? '' : currentUser.center, subDistrict: '', center: currentUser?.center || 'ศูนย์กลาง' });
+      addToast('บันทึกสำเร็จ', 'success');
+    };
+
+    return (
+      <div className="space-y-4">
+        <div className="flex flex-col md:flex-row justify-between gap-4">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+            <input 
+              type="text" 
+              placeholder="ค้นหากิจกรรม..." 
+              className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
+          <button 
+            onClick={() => { setEditingItem(null); setForm({ date: '', title: '', detail: '', location: currentUser.role === 'admin' ? '' : currentUser.center, subDistrict: '', center: currentUser?.center || 'ศูนย์กลาง' }); setIsFormOpen(true); }}
+            className="bg-[#1a3a8a] text-white px-4 py-2 rounded-lg flex items-center justify-center space-x-2 hover:bg-[#152e6e]"
+          >
+            <Plus size={18} />
+            <span>เพิ่มกิจกรรม</span>
+          </button>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-x-auto">
+          <table className="w-full text-left">
+            <thead className="bg-gray-50 text-xs text-gray-500 uppercase">
+              <tr>
+                <th className="px-6 py-3">วันที่</th>
+                <th className="px-6 py-3">ชื่องาน/กิจกรรม</th>
+                <th className="px-6 py-3">สถานที่ (ตำบล)</th>
+                <th className="px-6 py-3">ศูนย์ผู้จัด</th>
+                <th className="px-6 py-3">รายละเอียด</th>
+                <th className="px-6 py-3 text-right">จัดการ</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {filtered.map(act => (
+                <tr key={act.id} className="hover:bg-gray-50 transition-colors">
+                  <td className="px-6 py-4 text-sm whitespace-nowrap">{formatDate(act.date)}</td>
+                  <td className="px-6 py-4 text-sm font-bold text-gray-800">{act.title}</td>
+                  <td className="px-6 py-4 text-sm">อ.{act.location} ต.{act.subDistrict}</td>
+                  <td className="px-6 py-4 text-sm text-gray-500">{act.center}</td>
+                  <td className="px-6 py-4 text-sm text-gray-500 max-w-xs truncate">{act.detail}</td>
+                  <td className="px-6 py-4 text-right space-x-2 whitespace-nowrap">
+                    <button 
+                      onClick={() => { setEditingItem(act); setForm(act); setIsFormOpen(true); }}
+                      className="p-1.5 text-blue-600 hover:bg-blue-50 rounded" title="แก้ไข"
+                    >
+                      <Edit2 size={16} />
+                    </button>
+                    <button 
+                      onClick={() => {
+                        requestConfirm('ยืนยันการลบกิจกรรม', `คุณต้องการลบกิจกรรม "${act.title}" ใช่หรือไม่?`, () => {
+                          setActivities(activities.filter(a => a.id !== act.id));
+                          addLog(currentUser, 'DELETE', 'ACTIVITIES', `Deleted activity: ${act.title}`, act, null);
+                          addToast('ลบกิจกรรมแล้ว', 'info');
+                        });
+                      }}
+                      className="p-1.5 text-red-600 hover:bg-red-50 rounded" title="ลบ"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {isFormOpen && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in duration-200">
+              <div className="p-6 bg-[#1a3a8a] text-white flex justify-between items-center">
+                <h3 className="text-xl font-bold">{editingItem ? 'แก้ไขกิจกรรม' : 'เพิ่มกิจกรรมใหม่'}</h3>
+                <button onClick={() => setIsFormOpen(false)}><X size={24} /></button>
+              </div>
+              <form onSubmit={saveActivity} className="p-6 space-y-4">
+                {currentUser.role === 'admin' && (
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium mb-1 text-gray-700">ศูนย์ประสานงาน (เจ้าของข้อมูล)</label>
+                    <select required className="w-full border p-2 rounded-lg bg-yellow-50 focus:bg-white" value={form.center} onChange={e => setForm({...form, center: e.target.value})}>
+                      <option value="ศูนย์กลาง">ศูนย์กลาง</option>
+                      {LOCATIONS.map(l => <option key={l.name} value={l.name}>ศูนย์ฯ {l.name}</option>)}
+                    </select>
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-1 text-gray-700">วันที่</label>
+                    <input type="date" required className="w-full border p-2 rounded-lg" value={form.date} onChange={e => setForm({...form, date: e.target.value})} />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1 text-gray-700">ชื่องาน</label>
+                    <input type="text" required className="w-full border p-2 rounded-lg" placeholder="ระบุชื่อกิจกรรม" value={form.title} onChange={e => setForm({...form, title: e.target.value})} />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1 text-gray-700">รายละเอียด</label>
+                  <textarea rows="3" className="w-full border p-2 rounded-lg" value={form.detail} onChange={e => setForm({...form, detail: e.target.value})}></textarea>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-1 text-gray-700">สถานที่ (อำเภอ)</label>
+                    <select required className={`w-full border p-2 rounded-lg ${currentUser.role !== 'admin' ? 'bg-gray-100 cursor-not-allowed' : ''}`} value={form.location} onChange={e => setForm({...form, location: e.target.value, subDistrict: ''})} disabled={currentUser.role !== 'admin'}>
+                      <option value="">เลือกอำเภอ</option>
+                      {availableLocations.map(l => <option key={l.name} value={l.name}>{l.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1 text-gray-700">ตำบล</label>
+                    <select required className="w-full border p-2 rounded-lg" value={form.subDistrict} onChange={e => setForm({...form, subDistrict: e.target.value})}>
+                      <option value="">เลือกตำบล</option>
+                      {LOCATIONS.find(l => l.name === form.location)?.subDistricts.map(sd => <option key={sd} value={sd}>{sd}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div className="pt-4 flex justify-end space-x-3 border-t mt-4">
+                  <button type="button" onClick={() => setIsFormOpen(false)} className="px-6 py-2 rounded-lg border hover:bg-gray-50">ยกเลิก</button>
+                  <button type="submit" className="px-6 py-2 rounded-lg bg-[#1a3a8a] text-white hover:bg-[#152e6e]">บันทึก</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const SupportView = () => {
+    const [isFormOpen, setIsFormOpen] = useState(false);
+    const [isManagingTypes, setIsManagingTypes] = useState(false);
+    const [newSupportType, setNewSupportType] = useState('');
+    const [editingType, setEditingType] = useState(null);
+    const [form, setForm] = useState({ type: supportTypes[0] || '', date: '', deceased: '', localLocation: '', location: currentUser?.role === 'admin' ? '' : currentUser?.center, subDistrict: '', representative: '', water: 0, wreaths: 0, money: 0, note: '', center: currentUser?.center || 'ศูนย์กลาง' });
+
+    const filtered = filterByCenter(supportRecords);
+    const totals = {
+      water: filtered.reduce((a, b) => a + Number(b.water || 0), 0),
+      wreaths: filtered.reduce((a, b) => a + Number(b.wreaths || 0), 0),
+      money: filtered.reduce((a, b) => a + Number(b.money || 0), 0),
+    };
+
+    const availableLocations = currentUser.role === 'admin' ? LOCATIONS : LOCATIONS.filter(l => l.name === currentUser.center);
+
+    const saveSupport = (e) => {
+      e.preventDefault();
+      const newRec = { ...form, id: editingItem?.id || Date.now() };
+      // ป้องกันการบันทึกข้ามศูนย์
+      if (!newRec.center) newRec.center = currentUser.center;
+
+      if (editingItem) {
+        setSupportRecords(supportRecords.map(s => s.id === editingItem.id ? newRec : s));
+        addLog(currentUser, 'UPDATE', 'SUPPORT', `Updated support record`, editingItem, newRec);
+      } else {
+        setSupportRecords([newRec, ...supportRecords]);
+        addLog(currentUser, 'CREATE', 'SUPPORT', `Created support record`, null, newRec);
+      }
+      setIsFormOpen(false);
+      setEditingItem(null);
+      addToast('บันทึกข้อมูลสนับสนุนแล้ว', 'success');
+    };
+
+    const handleAddSupportType = () => {
+      const trimmed = newSupportType.trim();
+      if (trimmed && !supportTypes.includes(trimmed)) {
+        setSupportTypes([...supportTypes, trimmed]);
+        setNewSupportType('');
+        addToast('เพิ่มประเภทงานแล้ว', 'success');
+      }
+    };
+
+    const handleEditSupportType = (oldType, newType) => {
+      const trimmed = newType.trim();
+      if (trimmed && trimmed !== oldType && !supportTypes.includes(trimmed)) {
+        setSupportTypes(supportTypes.map(t => t === oldType ? trimmed : t));
+        if (form.type === oldType) setForm({...form, type: trimmed});
+        addToast('แก้ไขประเภทงานแล้ว', 'success');
+      }
+      setEditingType(null);
+    };
+
+    const handleDeleteSupportType = (type) => {
+      requestConfirm('ยืนยันการลบ', `ยืนยันการลบประเภทงาน "${type}" ใช่หรือไม่?`, () => {
+        const newTypes = supportTypes.filter(t => t !== type);
+        setSupportTypes(newTypes);
+        if (form.type === type) {
+          setForm({...form, type: newTypes[0] || ''});
+        }
+        addToast('ลบประเภทงานแล้ว', 'info');
+      });
+    };
+
+    return (
+      <div className="space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="bg-sky-50 border border-sky-100 p-4 rounded-xl text-center">
+            <p className="text-xs font-bold text-sky-600 uppercase tracking-wider mb-1">น้ำรวม (แพ็ค)</p>
+            <p className="text-3xl font-black text-sky-900">{totals.water}</p>
+          </div>
+          <div className="bg-rose-50 border border-rose-100 p-4 rounded-xl text-center">
+            <p className="text-xs font-bold text-rose-600 uppercase tracking-wider mb-1">พวงหรีดรวม (พวง)</p>
+            <p className="text-3xl font-black text-rose-900">{totals.wreaths}</p>
+          </div>
+          <div className="bg-amber-50 border border-amber-100 p-4 rounded-xl text-center">
+            <p className="text-xs font-bold text-amber-600 uppercase tracking-wider mb-1">มอบเงินรวม (บาท)</p>
+            <p className="text-3xl font-black text-amber-900">{totals.money.toLocaleString()}</p>
+          </div>
+        </div>
+
+        <div className="flex justify-between items-center">
+          <h3 className="text-lg font-bold text-gray-800 self-center">รายการสนับสนุน</h3>
+          <div className="space-x-2 flex">
+            <button onClick={() => window.print()} className="bg-white border text-gray-600 px-3 py-2 rounded-lg text-sm flex items-center space-x-2 hover:bg-gray-50">
+              <Download size={16} /> <span>Export PDF</span>
+            </button>
+            <button onClick={() => { setEditingItem(null); setForm({ type: supportTypes[0] || '', date: '', deceased: '', localLocation: '', location: currentUser.role === 'admin' ? '' : currentUser.center, subDistrict: '', representative: '', water: 0, wreaths: 0, money: 0, note: '', center: currentUser?.center || 'ศูนย์กลาง' }); setIsFormOpen(true); }} className="bg-[#d4a843] text-white px-4 py-2 rounded-lg text-sm flex items-center space-x-2 hover:bg-[#b88d35]">
+              <Plus size={16} /> <span>เพิ่มข้อมูล</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-x-auto">
+          <table className="w-full text-left text-xs xl:text-sm">
+            <thead className="bg-gray-50 text-[10px] xl:text-xs text-gray-500 uppercase leading-tight">
+              <tr>
+                <th className="px-2 py-3 text-center w-10">ลำดับ</th>
+                <th className="px-2 py-3 whitespace-nowrap">วันที่</th>
+                <th className="px-2 py-3 whitespace-nowrap">ศูนย์ผู้จัด</th>
+                <th className="px-2 py-3 min-w-[100px]">ชื่อผู้เสียชีวิต</th>
+                <th className="px-2 py-3 min-w-[120px]">สถานที่ (บ้าน/วัด/หมู่)</th>
+                <th className="px-2 py-3 min-w-[100px]">ผู้แทนไปร่วมงาน</th>
+                <th className="px-2 py-3 whitespace-nowrap">อำเภอ</th>
+                <th className="px-2 py-3 whitespace-nowrap">ตำบล</th>
+                <th className="px-2 py-3 text-center whitespace-nowrap">น้ำ(แพ็ค)</th>
+                <th className="px-2 py-3 text-center whitespace-nowrap">หรีด(พวง)</th>
+                <th className="px-2 py-3 text-right whitespace-nowrap">มอบเงิน</th>
+                <th className="px-2 py-3 text-right whitespace-nowrap">จัดการ</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {filtered.map((rec, index) => (
+                <tr key={rec.id} className="hover:bg-gray-50">
+                  <td className="px-2 py-3 text-center text-gray-500">{index + 1}</td>
+                  <td className="px-2 py-3 whitespace-nowrap">{formatDate(rec.date)}</td>
+                  <td className="px-2 py-3 text-gray-500 whitespace-nowrap">{rec.center}</td>
+                  <td className="px-2 py-3 font-bold break-words">{rec.type === 'งานศพ' ? (rec.deceased || '-') : <span className="text-gray-400 font-normal">({rec.type})</span>}</td>
+                  <td className="px-2 py-3 break-words">{rec.localLocation || '-'}</td>
+                  <td className="px-2 py-3 text-gray-600 break-words">{rec.representative || '-'}</td>
+                  <td className="px-2 py-3 whitespace-nowrap">{rec.location || '-'}</td>
+                  <td className="px-2 py-3 whitespace-nowrap">{rec.subDistrict || '-'}</td>
+                  <td className="px-2 py-3 text-center font-bold text-sky-600">{rec.water || 0}</td>
+                  <td className="px-2 py-3 text-center font-bold text-rose-600">{rec.wreaths || 0}</td>
+                  <td className="px-2 py-3 text-right font-bold text-amber-600 whitespace-nowrap">{Number(rec.money).toLocaleString()}</td>
+                  <td className="px-2 py-3 text-right space-x-1 whitespace-nowrap">
+                    <button onClick={() => { setEditingItem(rec); setForm(rec); setIsFormOpen(true); }} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded" title="แก้ไข"><Edit2 size={14} /></button>
+                    <button onClick={() => {
+                        requestConfirm('ยืนยันการลบ', 'ลบข้อมูลการสนับสนุนนี้ใช่หรือไม่?', () => {
+                          const itemToDelete = supportRecords.find(s => s.id === rec.id);
+                          setSupportRecords(supportRecords.filter(s => s.id !== rec.id));
+                          addLog(currentUser, 'DELETE', 'SUPPORT', `Deleted support record`, itemToDelete, null);
+                          addToast('ลบข้อมูลแล้ว', 'info');
+                        });
+                    }} className="p-1.5 text-red-600 hover:bg-red-50 rounded" title="ลบ"><Trash2 size={14} /></button>
+                  </td>
+                </tr>
+              ))}
+              {filtered.length === 0 && (
+                <tr>
+                  <td colSpan="12" className="px-2 py-8 text-center text-gray-500">ยังไม่มีข้อมูลการสนับสนุน</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {isFormOpen && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl relative">
+              <div className="p-6 bg-[#d4a843] text-white flex justify-between items-center">
+                <h3 className="text-xl font-bold">{editingItem ? 'แก้ไขข้อมูลสนับสนุน' : 'บันทึกข้อมูลสนับสนุน'}</h3>
+                <button onClick={() => setIsFormOpen(false)}><X size={24} /></button>
+              </div>
+
+              {isManagingTypes ? (
+                <div className="p-6 h-[60vh] flex flex-col bg-gray-50 animate-in fade-in zoom-in duration-200">
+                  <div className="flex justify-between items-center mb-4">
+                    <h4 className="text-lg font-bold text-gray-800">จัดการประเภทงาน</h4>
+                    <button type="button" onClick={() => setIsManagingTypes(false)} className="text-gray-500 hover:text-gray-800"><X size={20}/></button>
+                  </div>
+                  <div className="flex space-x-2 mb-4">
+                     <input type="text" value={newSupportType} onChange={e=>setNewSupportType(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddSupportType())} className="border p-2 rounded-lg w-full text-sm outline-none focus:ring-2 focus:ring-[#d4a843]" placeholder="เพิ่มประเภทใหม่..."/>
+                     <button type="button" onClick={handleAddSupportType} className="bg-[#d4a843] text-white px-4 rounded-lg text-sm font-bold whitespace-nowrap hover:bg-[#b88d35]">เพิ่ม</button>
+                  </div>
+                  <ul className="flex-1 overflow-y-auto divide-y border rounded-lg bg-white shadow-sm">
+                    {supportTypes.map(t => (
+                      <li key={t} className="p-3 flex justify-between items-center text-sm hover:bg-gray-50">
+                         {editingType === t ? (
+                             <input 
+                                autoFocus 
+                                defaultValue={t} 
+                                onBlur={(e) => handleEditSupportType(t, e.target.value)} 
+                                onKeyDown={(e) => {
+                                   if(e.key === 'Enter') { e.preventDefault(); handleEditSupportType(t, e.target.value); }
+                                   if(e.key === 'Escape') setEditingType(null);
+                                }} 
+                                className="border p-1 rounded w-full mr-2 outline-none focus:ring-1 focus:ring-[#d4a843]"
+                             />
+                         ) : (
+                             <span className="font-medium text-gray-700">{t}</span>
+                         )}
+                         <div className="flex space-x-2 ml-4">
+                           {editingType !== t && (
+                             <>
+                               <button type="button" onClick={() => setEditingType(t)} className="text-blue-500 hover:bg-blue-50 p-1 rounded" title="แก้ไข"><Edit2 size={16}/></button>
+                               <button type="button" onClick={() => handleDeleteSupportType(t)} className="text-red-500 hover:bg-red-50 p-1 rounded" title="ลบ"><Trash2 size={16}/></button>
+                             </>
+                           )}
+                         </div>
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="mt-4 text-right">
+                     <button type="button" onClick={() => setIsManagingTypes(false)} className="px-6 py-2 bg-gray-200 text-gray-800 rounded-lg text-sm font-bold hover:bg-gray-300">เสร็จสิ้น</button>
+                  </div>
+                </div>
+              ) : (
+                <form onSubmit={saveSupport} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+                  
+                  {currentUser.role === 'admin' && (
+                    <div className="mb-2">
+                      <label className="block text-sm font-medium mb-1">ศูนย์ประสานงาน (ผู้สนับสนุน - หักโควตาคลังนี้)</label>
+                      <select required className="w-full border p-2 rounded-lg bg-yellow-50 focus:bg-white" value={form.center} onChange={e => setForm({...form, center: e.target.value})}>
+                        <option value="ศูนย์กลาง">ศูนย์กลาง</option>
+                        {LOCATIONS.map(l => <option key={l.name} value={l.name}>ศูนย์ฯ {l.name}</option>)}
+                      </select>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-1 flex justify-between items-center">
+                        <span>ประเภทงาน</span>
+                        {currentUser.role === 'admin' && (
+                          <button type="button" onClick={() => setIsManagingTypes(true)} className="text-xs text-blue-600 hover:underline flex items-center">
+                            <Wrench size={12} className="mr-1" /> จัดการประเภท
+                          </button>
+                        )}
+                      </label>
+                      <select className="w-full border p-2 rounded-lg" value={form.type} onChange={e => setForm({...form, type: e.target.value})}>
+                        {supportTypes.map(t => (
+                          <option key={t} value={t}>{t}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">วันที่</label>
+                      <input type="date" required className="w-full border p-2 rounded-lg" value={form.date} onChange={e => setForm({...form, date: e.target.value})} />
+                    </div>
+                  </div>
+                  {form.type === 'งานศพ' && (
+                    <div>
+                      <label className="block text-sm font-medium mb-1">ชื่อผู้เสียชีวิต</label>
+                      <input type="text" className="w-full border p-2 rounded-lg" placeholder="ระบุชื่อ-นามสกุล" value={form.deceased} onChange={e => setForm({...form, deceased: e.target.value})} />
+                    </div>
+                  )}
+                  
+                  <div>
+                    <label className="block text-sm font-medium mb-1">สถานที่ (บ้าน/วัด/หมู่)</label>
+                    <input type="text" required className="w-full border p-2 rounded-lg" placeholder="เช่น วัดป่า... หมู่ 1" value={form.localLocation} onChange={e => setForm({...form, localLocation: e.target.value})} />
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-1">อำเภอ</label>
+                      <select required className={`w-full border p-2 rounded-lg ${currentUser.role !== 'admin' ? 'bg-gray-100 cursor-not-allowed' : ''}`} value={form.location} onChange={e => setForm({...form, location: e.target.value, subDistrict: ''})} disabled={currentUser.role !== 'admin'}>
+                        <option value="">เลือกอำเภอ</option>
+                        {availableLocations.map(l => <option key={l.name} value={l.name}>{l.name}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">ตำบล</label>
+                      <select required className="w-full border p-2 rounded-lg" value={form.subDistrict} onChange={e => setForm({...form, subDistrict: e.target.value})}>
+                        <option value="">เลือกตำบล</option>
+                        {LOCATIONS.find(l => l.name === form.location)?.subDistricts.map(sd => <option key={sd} value={sd}>{sd}</option>)}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium mb-1">ผู้แทนไปร่วมงาน (ถ้ามี)</label>
+                    <input type="text" className="w-full border p-2 rounded-lg" value={form.representative} onChange={e => setForm({...form, representative: e.target.value})} />
+                  </div>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-1 text-sky-600">น้ำ (แพ็ค)</label>
+                      <input type="number" min="0" className="w-full border p-2 rounded-lg bg-sky-50" value={form.water} onChange={e => setForm({...form, water: e.target.value})} />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1 text-rose-600">พวงหรีด (พวง)</label>
+                      <input type="number" min="0" className="w-full border p-2 rounded-lg" value={form.wreaths} onChange={e => setForm({...form, wreaths: e.target.value})} />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1 text-amber-600">มอบเงิน (บาท)</label>
+                      <input type="number" min="0" className="w-full border p-2 rounded-lg" value={form.money} onChange={e => setForm({...form, money: e.target.value})} />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">หมายเหตุ</label>
+                    <textarea className="w-full border p-2 rounded-lg" rows="2" value={form.note} onChange={e => setForm({...form, note: e.target.value})}></textarea>
+                  </div>
+                  <div className="pt-4 flex justify-end space-x-3 border-t mt-4">
+                    <button type="button" onClick={() => setIsFormOpen(false)} className="px-6 py-2 rounded-lg border hover:bg-gray-50">ยกเลิก</button>
+                    <button type="submit" className="px-6 py-2 rounded-lg bg-[#d4a843] text-white font-bold hover:bg-[#b88d35]">บันทึกข้อมูล</button>
+                  </div>
+                </form>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const BudgetView = () => {
+    const today = new Date();
+    const [selectedYear, setSelectedYear] = useState(today.getFullYear().toString());
+    const [selectedMonth, setSelectedMonth] = useState((today.getMonth() + 1).toString().padStart(2, '0'));
+
+    const THAI_MONTHS = [
+      { val: 'all', label: 'รวมทั้งปี' },
+      { val: '01', label: 'มกราคม' },
+      { val: '02', label: 'กุมภาพันธ์' },
+      { val: '03', label: 'มีนาคม' },
+      { val: '04', label: 'เมษายน' },
+      { val: '05', label: 'พฤษภาคม' },
+      { val: '06', label: 'มิถุนายน' },
+      { val: '07', label: 'กรกฎาคม' },
+      { val: '08', label: 'สิงหาคม' },
+      { val: '09', label: 'กันยายน' },
+      { val: '10', label: 'ตุลาคม' },
+      { val: '11', label: 'พฤศจิกายน' },
+      { val: '12', label: 'ธันวาคม' },
+    ];
+
+    // ดึงปีที่มีอยู่ในระบบออกมาทำ Dropdown
+    const availableYears = [...new Set(supportRecords.map(r => r.date.substring(0, 4)))];
+    if (!availableYears.includes(selectedYear)) availableYears.push(selectedYear);
+    availableYears.sort().reverse();
+
+    // กรองข้อมูลตาม เดือน/ปี และสิทธิ์การมองเห็นศูนย์
+    const filteredRecords = filterByCenter(supportRecords).filter(rec => {
+      const [y, m] = rec.date.split('-');
+      const matchYear = y === selectedYear;
+      const matchMonth = selectedMonth === 'all' ? true : m === selectedMonth;
+      return matchYear && matchMonth;
+    });
+
+    // คำนวณยอดรวมสุทธิ
+    const totalWater = filteredRecords.reduce((a, b) => a + Number(b.water || 0), 0);
+    const totalWreaths = filteredRecords.reduce((a, b) => a + Number(b.wreaths || 0), 0);
+    const totalMoney = filteredRecords.reduce((a, b) => a + Number(b.money || 0), 0);
+
+    // จัดกลุ่มตามศูนย์ประสานงาน
+    const allCentersForView = currentUser.role === 'admin' ? ['ศูนย์กลาง', ...LOCATIONS.map(l => l.name)] : [currentUser.center];
+    const centerTotals = {};
+    
+    allCentersForView.forEach(c => {
+      centerTotals[c] = { water: 0, wreaths: 0, money: 0 };
+    });
+
+    filteredRecords.forEach(rec => {
+      const c = rec.center || 'ศูนย์กลาง';
+      if (!centerTotals[c]) centerTotals[c] = { water: 0, wreaths: 0, money: 0 };
+      centerTotals[c].water += Number(rec.water || 0);
+      centerTotals[c].wreaths += Number(rec.wreaths || 0);
+      centerTotals[c].money += Number(rec.money || 0);
+    });
+
+    return (
+      <div className="space-y-6">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+          <div className="flex items-center space-x-2">
+            <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
+              <PieChart size={24} />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-gray-800">สรุปงบประมาณการสนับสนุน</h3>
+              <p className="text-xs text-gray-500">ข้อมูลสรุปการใช้น้ำดื่ม พวงหรีด และจำนวนเงิน</p>
+            </div>
+          </div>
+          
+          <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-3 w-full sm:w-auto">
+            <select 
+              className="border border-gray-200 rounded-lg px-4 py-2 text-sm font-medium text-gray-700 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-[#1a3a8a] outline-none transition-colors"
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(e.target.value)}
+            >
+              {THAI_MONTHS.map(m => (
+                <option key={m.val} value={m.val}>{m.label}</option>
+              ))}
+            </select>
+            <select 
+              className="border border-gray-200 rounded-lg px-4 py-2 text-sm font-medium text-gray-700 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-[#1a3a8a] outline-none transition-colors"
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(e.target.value)}
+            >
+              {availableYears.map(y => (
+                <option key={y} value={y}>ปี {Number(y) + 543}</option>
+              ))}
+            </select>
+            <button onClick={() => window.print()} className="bg-white border text-gray-600 px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center space-x-2 hover:bg-gray-50 shadow-sm transition-all">
+              <Printer size={16} /> <span>พิมพ์รายงาน</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Summary Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="bg-gradient-to-br from-sky-50 to-white p-6 rounded-2xl shadow-sm border border-sky-100 flex items-center space-x-4">
+            <div className="p-4 bg-sky-100 text-sky-600 rounded-2xl">
+              <Droplets size={32} />
+            </div>
+            <div>
+              <p className="text-sm font-bold text-sky-700 mb-1">น้ำดื่มที่ใช้ทั้งหมด</p>
+              <p className="text-4xl font-black text-sky-900">{totalWater.toLocaleString()} <span className="text-sm font-medium text-sky-600">แพ็ค</span></p>
+            </div>
+          </div>
+          
+          <div className="bg-gradient-to-br from-rose-50 to-white p-6 rounded-2xl shadow-sm border border-rose-100 flex items-center space-x-4">
+            <div className="p-4 bg-rose-100 text-rose-600 rounded-2xl">
+              <HeartHandshake size={32} />
+            </div>
+            <div>
+              <p className="text-sm font-bold text-rose-700 mb-1">พวงหรีดที่ใช้ทั้งหมด</p>
+              <p className="text-4xl font-black text-rose-900">{totalWreaths.toLocaleString()} <span className="text-sm font-medium text-rose-600">พวง</span></p>
+            </div>
+          </div>
+
+          <div className="bg-gradient-to-br from-amber-50 to-white p-6 rounded-2xl shadow-sm border border-amber-100 flex items-center space-x-4">
+            <div className="p-4 bg-amber-100 text-amber-600 rounded-2xl">
+              <PieChart size={32} />
+            </div>
+            <div>
+              <p className="text-sm font-bold text-amber-700 mb-1">งบประมาณที่ใช้ทั้งหมด</p>
+              <p className="text-4xl font-black text-amber-900">{totalMoney.toLocaleString()} <span className="text-sm font-medium text-amber-600">บาท</span></p>
+            </div>
+          </div>
+        </div>
+
+        {/* Data Table */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+            <h3 className="font-bold text-gray-800">รายละเอียดแบ่งตามศูนย์ประสานงาน</h3>
+            <span className="text-xs font-medium text-gray-500 bg-white px-3 py-1 rounded-full border shadow-sm">
+              ประจำเดือน: {THAI_MONTHS.find(m => m.val === selectedMonth)?.label} ปี {Number(selectedYear) + 543}
+            </span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead className="bg-white border-b border-gray-200">
+                <tr>
+                  <th className="px-6 py-4 text-sm font-bold text-gray-600 uppercase tracking-wider">ศูนย์ประสานงาน</th>
+                  <th className="px-6 py-4 text-sm font-bold text-sky-600 uppercase tracking-wider text-right">น้ำดื่มที่ใช้ (แพ็ค)</th>
+                  <th className="px-6 py-4 text-sm font-bold text-rose-600 uppercase tracking-wider text-right">พวงหรีดที่ใช้ (พวง)</th>
+                  <th className="px-6 py-4 text-sm font-bold text-amber-600 uppercase tracking-wider text-right">จำนวนเงิน (บาท)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {allCentersForView.map(center => (
+                  <tr key={center} className="hover:bg-gray-50/80 transition-colors">
+                    <td className="px-6 py-4">
+                      <div className="flex items-center space-x-3">
+                        <div className={`w-2 h-2 rounded-full ${center === 'ศูนย์กลาง' ? 'bg-[#1a3a8a]' : 'bg-[#d4a843]'}`}></div>
+                        <span className="font-bold text-gray-700">{center}</span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 text-right font-medium text-gray-700 bg-sky-50/30">{centerTotals[center]?.water.toLocaleString()}</td>
+                    <td className="px-6 py-4 text-right font-medium text-gray-700 bg-rose-50/30">{centerTotals[center]?.wreaths.toLocaleString()}</td>
+                    <td className="px-6 py-4 text-right font-bold text-gray-800 bg-amber-50/30">{centerTotals[center]?.money.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="bg-gray-800 text-white">
+                <tr>
+                  <td className="px-6 py-4 font-black uppercase text-sm tracking-widest">รวมทั้งหมด (Total)</td>
+                  <td className="px-6 py-4 text-right font-black text-sky-300">{totalWater.toLocaleString()}</td>
+                  <td className="px-6 py-4 text-right font-black text-rose-300">{totalWreaths.toLocaleString()}</td>
+                  <td className="px-6 py-4 text-right font-black text-amber-400 text-lg">{totalMoney.toLocaleString()}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const RepairsView = () => {
+    const today = new Date();
+    const timeString = `${String(today.getHours()).padStart(2, '0')}:${String(today.getMinutes()).padStart(2, '0')}`;
+    const [selectedYear, setSelectedYear] = useState(today.getFullYear().toString());
+    const [selectedMonth, setSelectedMonth] = useState((today.getMonth() + 1).toString().padStart(2, '0'));
+    const [filterCenter, setFilterCenter] = useState('ทั้งหมด');
+    const [isFormOpen, setIsFormOpen] = useState(false);
+    const [isMapPickerOpen, setIsMapPickerOpen] = useState(false);
+    const [isOverviewMapOpen, setIsOverviewMapOpen] = useState(false);
+    const [form, setForm] = useState({ date: today.toISOString().split('T')[0], time: timeString, type: '', detail: '', reporter: '', phone: '', location: currentUser?.role === 'admin' ? '' : currentUser?.center, subDistrict: '', lat: '', lng: '', status: 'รออนุมัติ', center: currentUser?.center || 'ศูนย์กลาง' });
+    const [coordInput, setCoordInput] = useState('');
+
+    const availableLocations = currentUser.role === 'admin' ? LOCATIONS : LOCATIONS.filter(l => l.name === currentUser.center);
+
+    useEffect(() => {
+      if (form.lat && form.lng) {
+        setCoordInput(`${form.lat}, ${form.lng}`);
+      } else {
+        setCoordInput('');
+      }
+    }, [form.lat, form.lng]);
+
+    const handleCoordInputChange = (e) => {
+      const val = e.target.value;
+      setCoordInput(val);
+
+      if (val.trim() === '') {
+        setForm(prev => ({ ...prev, lat: '', lng: '' }));
+        return;
+      }
+
+      if (val.includes(',')) {
+        const parts = val.split(',');
+        setForm(prev => ({ ...prev, lat: parts[0].trim(), lng: parts[1].trim() }));
+      }
+    };
+
+    const THAI_MONTHS = [
+      { val: 'all', label: 'รวมทั้งปี' },
+      { val: '01', label: 'มกราคม' },
+      { val: '02', label: 'กุมภาพันธ์' },
+      { val: '03', label: 'มีนาคม' },
+      { val: '04', label: 'เมษายน' },
+      { val: '05', label: 'พฤษภาคม' },
+      { val: '06', label: 'มิถุนายน' },
+      { val: '07', label: 'กรกฎาคม' },
+      { val: '08', label: 'สิงหาคม' },
+      { val: '09', label: 'กันยายน' },
+      { val: '10', label: 'ตุลาคม' },
+      { val: '11', label: 'พฤศจิกายน' },
+      { val: '12', label: 'ธันวาคม' },
+    ];
+
+    const availableYears = [...new Set(repairs.map(r => r.date.substring(0, 4)))];
+    if (!availableYears.includes(selectedYear)) availableYears.push(selectedYear);
+    availableYears.sort().reverse();
+
+    const baseFiltered = filterByCenter(repairs);
+    let centerFiltered = [];
+    if (currentUser.role === 'admin') {
+      centerFiltered = filterCenter === 'ทั้งหมด' ? baseFiltered : baseFiltered.filter(r => r.center === filterCenter);
+    } else {
+      centerFiltered = baseFiltered;
+    }
+
+    const displayRepairs = centerFiltered.filter(rec => {
+      const [y, m] = rec.date.split('-');
+      const matchYear = y === selectedYear;
+      const matchMonth = selectedMonth === 'all' ? true : m === selectedMonth;
+      return matchYear && matchMonth;
+    });
+
+    const pendingCount = displayRepairs.filter(r => r.status === 'รออนุมัติ').length;
+    const inProgressCount = displayRepairs.filter(r => r.status === 'กำลังแก้ไข').length;
+    const completedCount = displayRepairs.filter(r => r.status === 'เสร็จแล้ว').length;
+
+    const handleOpenNewRepair = () => {
+      setEditingItem(null);
+      const now = new Date();
+      setForm({ date: now.toISOString().split('T')[0], time: `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`, type: '', detail: '', reporter: '', phone: '', location: currentUser?.role === 'admin' ? '' : currentUser?.center, subDistrict: '', lat: '', lng: '', status: 'รออนุมัติ', center: currentUser?.center || 'ศูนย์กลาง' });
+      setIsFormOpen(true);
+      
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition((pos) => {
+          setForm(prev => ({ ...prev, lat: pos.coords.latitude.toFixed(6), lng: pos.coords.longitude.toFixed(6) }));
+        }, () => {
+          console.log('Location access denied or unavailable.');
+        });
+      }
+    };
+
+    const getCurrentLocationInline = () => {
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition((pos) => {
+          setForm(prev => ({ ...prev, lat: pos.coords.latitude.toFixed(6), lng: pos.coords.longitude.toFixed(6) }));
+          addToast('ดึงพิกัดปัจจุบันแล้ว', 'success');
+        }, () => {
+          addToast('ไม่สามารถดึงตำแหน่งปัจจุบันได้', 'error');
+        });
+      } else {
+        addToast('เบราว์เซอร์ไม่รองรับการระบุตำแหน่ง', 'error');
+      }
+    };
+
+    const saveRepair = (e) => {
+      e.preventDefault();
+      const newRep = { ...form, id: editingItem?.id || Date.now() };
+      if (!newRep.center) newRep.center = currentUser.center;
+
+      if (editingItem) setRepairs(repairs.map(r => r.id === editingItem.id ? newRep : r));
+      else setRepairs([newRep, ...repairs]);
+      setIsFormOpen(false);
+      setEditingItem(null);
+      addToast('ส่งข้อมูลรับเรื่องร้องทุกข์แล้ว', 'success');
+    };
+
+    return (
+      <div className="space-y-6">
+        
+        {/* Header & Filters */}
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+           <div className="flex items-center space-x-3">
+              <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
+                <Wrench size={24} />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-gray-800">สรุปข้อมูลรับเรื่องร้องทุกข์</h3>
+                <p className="text-xs text-gray-500">สถานะรับเรื่องร้องทุกข์แยกตามเดือนและปี</p>
+              </div>
+           </div>
+           
+           <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-3 w-full md:w-auto">
+             {currentUser.role === 'admin' && (
+                <select 
+                  className="border border-gray-200 rounded-lg px-3 py-2 text-sm font-medium text-gray-700 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-[#1a3a8a] outline-none transition-colors"
+                  value={filterCenter}
+                  onChange={(e) => setFilterCenter(e.target.value)}
+                >
+                  <option value="ทั้งหมด">ทุกศูนย์ประสานงาน</option>
+                  <option value="ศูนย์กลาง">ศูนย์กลาง</option>
+                  {LOCATIONS.map(loc => (
+                    <option key={loc.name} value={loc.name}>ศูนย์ฯ {loc.name}</option>
+                  ))}
+                </select>
+             )}
+             <select 
+                className="border border-gray-200 rounded-lg px-3 py-2 text-sm font-medium text-gray-700 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-[#1a3a8a] outline-none transition-colors"
+                value={selectedMonth}
+                onChange={(e) => setSelectedMonth(e.target.value)}
+             >
+                {THAI_MONTHS.map(m => (
+                  <option key={m.val} value={m.val}>{m.label}</option>
+                ))}
+             </select>
+             <select 
+                className="border border-gray-200 rounded-lg px-3 py-2 text-sm font-medium text-gray-700 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-[#1a3a8a] outline-none transition-colors"
+                value={selectedYear}
+                onChange={(e) => setSelectedYear(e.target.value)}
+             >
+                {availableYears.map(y => (
+                  <option key={y} value={y}>ปี {Number(y) + 543}</option>
+                ))}
+             </select>
+             <button onClick={() => window.print()} className="bg-white border border-gray-200 text-gray-600 px-3 py-2 rounded-lg text-sm font-bold flex items-center justify-center space-x-2 hover:bg-gray-50 shadow-sm transition-all">
+                <Printer size={16} /> <span className="hidden sm:inline">พิมพ์รายงาน</span>
+             </button>
+           </div>
+        </div>
+
+        {/* Summary Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 md:gap-6">
+           <div className="bg-gradient-to-br from-amber-50 to-white p-5 rounded-2xl shadow-sm border border-amber-100 flex items-center justify-between transition-transform hover:scale-[1.02]">
+              <div className="flex items-center space-x-4">
+                 <div className="p-3 bg-amber-100 text-amber-600 rounded-xl">
+                    <AlertCircle size={28} />
+                 </div>
+                 <div>
+                    <p className="text-sm font-bold text-amber-700 mb-0.5">รออนุมัติ</p>
+                    <p className="text-3xl font-black text-amber-900">{pendingCount} <span className="text-xs font-medium text-amber-600">รายการ</span></p>
+                 </div>
+              </div>
+           </div>
+
+           <div className="bg-gradient-to-br from-blue-50 to-white p-5 rounded-2xl shadow-sm border border-blue-100 flex items-center justify-between transition-transform hover:scale-[1.02]">
+              <div className="flex items-center space-x-4">
+                 <div className="p-3 bg-blue-100 text-blue-600 rounded-xl">
+                    <Settings size={28} />
+                 </div>
+                 <div>
+                    <p className="text-sm font-bold text-blue-700 mb-0.5">กำลังแก้ไข</p>
+                    <p className="text-3xl font-black text-blue-900">{inProgressCount} <span className="text-xs font-medium text-blue-600">รายการ</span></p>
+                 </div>
+              </div>
+           </div>
+
+           <div className="bg-gradient-to-br from-green-50 to-white p-5 rounded-2xl shadow-sm border border-green-100 flex items-center justify-between transition-transform hover:scale-[1.02]">
+              <div className="flex items-center space-x-4">
+                 <div className="p-3 bg-green-100 text-green-600 rounded-xl">
+                    <CheckCircle size={28} />
+                 </div>
+                 <div>
+                    <p className="text-sm font-bold text-green-700 mb-0.5">เสร็จแล้ว</p>
+                    <p className="text-3xl font-black text-green-900">{completedCount} <span className="text-xs font-medium text-green-600">รายการ</span></p>
+                 </div>
+              </div>
+           </div>
+        </div>
+
+        {/* Table Header & Map Overview Button */}
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mt-2 gap-3">
+          <div className="flex items-center flex-wrap gap-3">
+            <h3 className="text-lg font-bold text-gray-800">รายการรับเรื่องร้องทุกข์ทั้งหมด</h3>
+            <button 
+              onClick={() => setIsOverviewMapOpen(true)} 
+              className="bg-indigo-50 text-indigo-700 border border-indigo-200 px-3 py-1.5 rounded-lg flex items-center space-x-1.5 hover:bg-indigo-100 transition shadow-sm text-xs font-bold whitespace-nowrap"
+            >
+              <MapIcon size={14} />
+              <span>ภาพรวมพื้นที่ เขต 6</span>
+            </button>
+          </div>
+          <button onClick={handleOpenNewRepair} className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center space-x-2 hover:bg-blue-700 transition shadow-sm text-sm font-medium whitespace-nowrap w-full sm:w-auto justify-center">
+            <Plus size={16} />
+            <span>แจ้งเรื่องร้องทุกข์</span>
+          </button>
+        </div>
+
+        {/* Data Table - Adjusted to prevent scroll */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="overflow-x-auto p-0">
+            <table className="w-full text-left text-xs xl:text-sm">
+              <thead className="bg-gray-50 text-[10px] xl:text-xs text-gray-500 uppercase leading-tight border-b border-gray-200">
+                <tr>
+                  <th className="px-2 py-3 whitespace-nowrap">วัน/เวลา</th>
+                  <th className="px-2 py-3 whitespace-nowrap">ศูนย์รับเรื่อง</th>
+                  <th className="px-2 py-3 min-w-[120px]">รายละเอียดปัญหา</th>
+                  <th className="px-2 py-3 min-w-[100px]">ผู้แจ้ง/เบอร์ติดต่อ</th>
+                  <th className="px-2 py-3 whitespace-nowrap">ตำบล</th>
+                  <th className="px-2 py-3 whitespace-nowrap">อำเภอ</th>
+                  <th className="px-2 py-3 text-center whitespace-nowrap">พิกัด</th>
+                  <th className="px-2 py-3 text-center whitespace-nowrap">สถานะ</th>
+                  <th className="px-2 py-3 text-right whitespace-nowrap">จัดการ</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {displayRepairs.map(r => (
+                  <tr key={r.id} className="hover:bg-gray-50/50 transition-colors">
+                    <td className="px-2 py-3 whitespace-nowrap">
+                      <div className="font-medium text-gray-800">{formatDate(r.date)}</div>
+                      <div className="text-[10px] text-gray-500 mt-0.5">{r.time}</div>
+                    </td>
+                    <td className="px-2 py-3 text-gray-600 whitespace-nowrap text-xs xl:text-sm">{r.center}</td>
+                    <td className="px-2 py-3 break-words text-xs xl:text-sm">
+                      <div className="font-bold text-gray-900">{r.type}</div>
+                      <div className="text-[10px] xl:text-xs text-gray-500 mt-1 leading-snug">{r.detail}</div>
+                    </td>
+                    <td className="px-2 py-3 break-words text-xs xl:text-sm">
+                      <div className="font-medium text-gray-800 flex items-center"><User size={12} className="mr-1 text-gray-400 shrink-0"/>{r.reporter}</div>
+                      <div className="text-blue-600 text-[10px] xl:text-xs mt-1">{r.phone}</div>
+                    </td>
+                    <td className="px-2 py-3 text-gray-600 whitespace-nowrap text-xs xl:text-sm">{r.subDistrict || '-'}</td>
+                    <td className="px-2 py-3 text-gray-600 whitespace-nowrap text-xs xl:text-sm">{r.location || '-'}</td>
+                    <td className="px-2 py-3 text-center align-middle">
+                      {r.lat && r.lng ? (
+                        <a href={`https://www.google.com/maps?q=${r.lat},${r.lng}`} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center space-x-1 text-blue-600 bg-blue-50 px-2.5 py-1.5 rounded-full text-[10px] xl:text-xs hover:bg-blue-100 transition-colors whitespace-nowrap border border-blue-100 font-medium">
+                          <MapPin size={12} /> <span>ดูแผนที่</span>
+                        </a>
+                      ) : <span className="text-gray-300">-</span>}
+                    </td>
+                    <td className="px-2 py-3 text-center align-middle">
+                      <span className={`inline-block px-2.5 py-1 rounded-full text-[10px] xl:text-xs font-bold whitespace-nowrap border ${
+                        r.status === 'เสร็จแล้ว' ? 'bg-green-50 text-green-700 border-green-200' : 
+                        r.status === 'กำลังแก้ไข' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-amber-50 text-amber-700 border-amber-200'
+                      }`}>
+                        {r.status}
+                      </span>
+                    </td>
+                    <td className="px-2 py-3 text-right space-x-1 whitespace-nowrap align-middle">
+                      <button onClick={() => { setEditingItem(r); setForm(r); setIsFormOpen(true); }} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded" title="แก้ไข"><Edit2 size={14} /></button>
+                      <button onClick={() => {
+                          requestConfirm('ยืนยันการลบ', 'ลบข้อมูลรับเรื่องร้องทุกข์นี้ใช่หรือไม่?', () => {
+                            const itemToDelete = repairs.find(item => item.id === r.id);
+                            setRepairs(repairs.filter(item => item.id !== r.id));
+                            addLog(currentUser, 'DELETE', 'REPAIRS', `Deleted repair record`, itemToDelete, null);
+                            addToast('ลบข้อมูลแล้ว', 'info');
+                          });
+                      }} className="p-1.5 text-red-600 hover:bg-red-50 rounded" title="ลบ"><Trash2 size={14} /></button>
+                    </td>
+                  </tr>
+                ))}
+                {displayRepairs.length === 0 && (
+                  <tr>
+                    <td colSpan="9" className="px-2 py-10 text-center text-gray-500">ไม่พบรายการรับเรื่องร้องทุกข์ในเดือน/ปีที่เลือก</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Overview Map Modal */}
+        {isOverviewMapOpen && (
+           <OverviewMapModal 
+             repairs={displayRepairs} 
+             onClose={() => setIsOverviewMapOpen(false)} 
+           />
+        )}
+
+        {/* Modal Form */}
+        {isFormOpen && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[150] p-4">
+            <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200 relative">
+              
+              {/* ซ่อนฟอร์มหลักถ้ากำลังเปิดแผนที่ */}
+              <div className={`${isMapPickerOpen ? 'hidden' : 'block'}`}>
+                <div className="bg-blue-600 p-5 text-center text-white relative">
+                  <button type="button" onClick={() => setIsFormOpen(false)} className="absolute right-4 top-4 text-white/80 hover:text-white bg-blue-700/50 hover:bg-blue-700 p-1.5 rounded-lg transition-colors"><X size={20}/></button>
+                  <div className="w-12 h-12 bg-white/20 rounded-full mx-auto flex items-center justify-center mb-3">
+                    <Wrench size={24} />
+                  </div>
+                  <h3 className="text-xl font-bold">{editingItem ? 'แก้ไขรับเรื่องร้องทุกข์' : 'แจ้งเรื่องร้องทุกข์'}</h3>
+                  <p className="text-xs text-blue-200 mt-1">รายงานปัญหาเพื่อชุมชนที่ดีขึ้น</p>
+                </div>
+
+                <form onSubmit={saveRepair} className="p-6 space-y-5 max-h-[75vh] overflow-y-auto">
+                  
+                  {/* 1. วันที่และเวลา */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-gray-600 text-sm font-medium flex items-center mb-1.5">
+                        <Calendar size={16} className="mr-1.5 text-blue-500" /> วันที่รับแจ้ง
+                      </label>
+                      <input type="date" required className="w-full border border-gray-300 p-2 rounded-xl text-sm focus:ring-2 focus:ring-blue-500" value={form.date} onChange={e => setForm({...form, date: e.target.value})} />
+                    </div>
+                    <div>
+                      <label className="text-gray-600 text-sm font-medium flex items-center mb-1.5">
+                        <Settings size={16} className="mr-1.5 text-blue-500" /> เวลารับแจ้ง
+                      </label>
+                      <input type="time" required className="w-full border border-gray-300 p-2 rounded-xl text-sm focus:ring-2 focus:ring-blue-500" value={form.time} onChange={e => setForm({...form, time: e.target.value})} />
+                    </div>
+                  </div>
+
+                  {/* 2. ประเภทปัญหาและสถานะ */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-gray-600 text-sm font-medium flex items-center mb-1.5">
+                        <Tag size={16} className="mr-1.5 text-blue-500" /> ประเภทปัญหา
+                      </label>
+                      <select required className="w-full border border-gray-300 p-2 rounded-xl text-sm focus:ring-2 focus:ring-blue-500" value={form.type} onChange={e => setForm({...form, type: e.target.value})}>
+                        <option value="">-- เลือก --</option>
+                        <option value="ไฟฟ้า/ไฟส่องสว่าง">ไฟฟ้า/ไฟส่องสว่าง</option>
+                        <option value="ถนน/ทางเท้า">ถนน/ทางเท้า</option>
+                        <option value="ประปา/ท่อแตก">ประปา/ท่อแตก</option>
+                        <option value="อาคารสถานที่">อาคารสถานที่</option>
+                        <option value="อื่นๆ">อื่นๆ</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-gray-600 text-sm font-medium flex items-center mb-1.5">
+                        สถานะงาน
+                      </label>
+                      <select required className="w-full border border-gray-300 p-2 rounded-xl text-sm focus:ring-2 focus:ring-blue-500" value={form.status} onChange={e => setForm({...form, status: e.target.value})}>
+                        <option value="รออนุมัติ">รออนุมัติ</option>
+                        <option value="กำลังแก้ไข">กำลังแก้ไข</option>
+                        <option value="เสร็จแล้ว">เสร็จแล้ว</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* 3. รายละเอียดเพิ่มเติม */}
+                  <div>
+                    <label className="text-gray-600 text-sm font-medium flex items-center mb-1.5">
+                      <AlignLeft size={16} className="mr-1.5 text-blue-500" /> รายละเอียดเพิ่มเติม
+                    </label>
+                    <textarea required rows="3" className="w-full border border-gray-300 p-2.5 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 resize-none" placeholder="ระบุรายละเอียดปัญหา..." value={form.detail} onChange={e => setForm({...form, detail: e.target.value})}></textarea>
+                  </div>
+
+                  {/* 4. ศูนย์ประสานงานรับผิดชอบ */}
+                  <div>
+                    <label className="text-gray-600 text-sm font-medium flex items-center mb-1.5">
+                      <MapIcon size={16} className="mr-1.5 text-blue-500" /> ศูนย์ประสานงานรับผิดชอบ
+                    </label>
+                    <select required className="w-full border border-gray-300 p-2.5 rounded-xl text-sm bg-yellow-50 focus:bg-white focus:ring-2 focus:ring-blue-500" value={form.center} onChange={e => setForm({...form, center: e.target.value})}>
+                      <option value="ศูนย์กลาง">ศูนย์กลาง</option>
+                      {LOCATIONS.map(l => <option key={l.name} value={l.name}>ศูนย์ฯ {l.name}</option>)}
+                    </select>
+                  </div>
+
+                  {/* 5. ชื่อผู้แจ้งและเบอร์ติดต่อ */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-gray-600 text-sm font-medium flex items-center mb-1.5">
+                        <User size={16} className="mr-1.5 text-blue-500" /> ชื่อผู้แจ้ง
+                      </label>
+                      <input type="text" required className="w-full border border-gray-300 p-2 rounded-xl text-sm focus:ring-2 focus:ring-blue-500" placeholder="ชื่อ - นามสกุล" value={form.reporter} onChange={e => setForm({...form, reporter: e.target.value})} />
+                    </div>
+                    <div>
+                      <label className="text-gray-600 text-sm font-medium flex items-center mb-1.5">
+                        <Phone size={16} className="mr-1.5 text-blue-500" /> เบอร์ติดต่อผู้แจ้ง
+                      </label>
+                      <input type="text" required className="w-full border border-gray-300 p-2 rounded-xl text-sm focus:ring-2 focus:ring-blue-500" placeholder="08X-XXX-XXXX" value={form.phone} onChange={e => setForm({...form, phone: e.target.value})} />
+                    </div>
+                  </div>
+
+                  {/* 6. อำเภอและตำบล */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-gray-600 text-xs font-medium mb-1">อำเภอ</label>
+                      <select required className="w-full border border-gray-300 p-2 rounded-xl text-sm focus:ring-2 focus:ring-blue-500" value={form.location} onChange={e => setForm({...form, location: e.target.value, subDistrict: ''})}>
+                        <option value="">เลือกอำเภอ</option>
+                        {LOCATIONS.map(l => <option key={l.name} value={l.name}>{l.name}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-gray-600 text-xs font-medium mb-1">ตำบล</label>
+                      <select required className="w-full border border-gray-300 p-2 rounded-xl text-sm focus:ring-2 focus:ring-blue-500" value={form.subDistrict} onChange={e => setForm({...form, subDistrict: e.target.value})}>
+                        <option value="">เลือกตำบล</option>
+                        {LOCATIONS.find(l => l.name === form.location)?.subDistricts.map(sd => <option key={sd} value={sd}>{sd}</option>)}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* 7. ตำแหน่งที่เกิดเหตุ */}
+                  <div>
+                    <div className="flex justify-between items-center mb-1.5">
+                      <label className="text-gray-600 text-sm font-medium flex items-center">
+                        <MapPin size={16} className="mr-1.5 text-blue-500" /> ตำแหน่งที่เกิดเหตุ
+                      </label>
+                      <button type="button" onClick={getCurrentLocationInline} className="text-xs bg-white border border-gray-300 px-2 py-1 rounded-lg text-blue-600 hover:bg-gray-50 flex items-center shadow-sm transition-colors">
+                        <Navigation size={12} className="mr-1" /> ดึงพิกัดปัจจุบัน
+                      </button>
+                    </div>
+                    <div className="mb-2">
+                      <input 
+                        type="text" 
+                        placeholder="เช่น 17.614833, 103.883088" 
+                        className="w-full border border-gray-300 p-2 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 bg-white" 
+                        value={coordInput} 
+                        onChange={handleCoordInputChange} 
+                      />
+                    </div>
+                    <div className="h-48 w-full rounded-xl overflow-hidden border border-gray-300 shadow-inner relative z-0">
+                       <InlineMapPicker 
+                         lat={form.lat} 
+                         lng={form.lng} 
+                         onLocationChange={(newLat, newLng) => setForm(prev => ({...prev, lat: newLat, lng: newLng}))} 
+                       />
+                    </div>
+                    <p className="text-[10px] text-gray-500 mt-1.5 flex justify-between">
+                       <span><span className="font-bold">ⓘ พิกัด:</span> {form.lat || '-'}, {form.lng || '-'}</span>
+                       <span className="opacity-70">(ลากหมุดเพื่อปรับตำแหน่งได้)</span>
+                    </p>
+                  </div>
+
+                  <div className="pt-2">
+                    <button type="submit" className="w-full bg-blue-600 text-white py-3.5 rounded-xl font-bold hover:bg-blue-700 shadow-md transition-all flex justify-center items-center text-sm">
+                       <Send size={16} className="mr-2"/> {editingItem ? 'บันทึกการแก้ไข' : 'ส่งข้อมูลรับเรื่องร้องทุกข์'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const WaterView = () => {
+    const [isFormOpen, setIsFormOpen] = useState(false);
+    const [filterCenter, setFilterCenter] = useState(currentUser?.role === 'admin' ? 'ศูนย์กลาง' : currentUser?.center);
+    const [isAddingSize, setIsAddingSize] = useState(false);
+    const [newSize, setNewSize] = useState('');
+    const [form, setForm] = useState({ date: '', size: waterSizes[0] || '350ml', amount: 0, center: currentUser?.center || 'พังโคน', location: '', status: currentUser?.role === 'admin' ? 'รับเข้า' : 'เบิกออก' });
+    
+    const [activeTab, setActiveTab] = useState('general'); // 'general' | 'support'
+
+    // States สำหรับให้ Admin แก้ไขยอดโดยตรง
+    const [isEditingTotals, setIsEditingTotals] = useState(false);
+    const [editTotals, setEditTotals] = useState({ in: 0, out: 0 });
+
+    const baseFiltered = filterByCenter(waterStock);
+    const baseSupportFiltered = filterByCenter(supportRecords);
+
+    let filtered = [];
+    let supportFiltered = [];
+
+    if (currentUser.role === 'admin') {
+      filtered = baseFiltered.filter(w => w.center === filterCenter);
+      supportFiltered = baseSupportFiltered.filter(r => r.center === filterCenter && Number(r.water) > 0);
+    } else {
+      filtered = baseFiltered;
+      supportFiltered = baseSupportFiltered.filter(r => Number(r.water) > 0);
+    }
+
+    const manualInCount = filtered.filter(w => w.status === 'รับเข้า').reduce((a, b) => a + Number(b.amount || 0), 0);
+    const manualOutCount = filtered.filter(w => w.status === 'เบิกออก').reduce((a, b) => a + Number(b.amount || 0), 0);
+    const supportOutCount = supportFiltered.reduce((a, b) => a + Number(b.water || 0), 0);
+
+    const inCount = manualInCount;
+    const outCount = manualOutCount + supportOutCount; // หักจากยอดการสนับสนุนด้วย
+
+    // คำนวณยอดคงเหลือของศูนย์นั้นๆ (รับเข้า - เบิกออกทั้งหมด)
+    const balance = inCount - outCount;
+
+    // สิทธิ์ในการจัดการน้ำดื่มแบบแยกส่วน
+    const canAddWater = currentUser.role === 'admin' || currentUser.permissions.includes('water_add');
+    const canEditWaterItem = currentUser.role === 'admin' || currentUser.permissions.includes('water_edit');
+    const canDeleteWater = currentUser.role === 'admin' || currentUser.permissions.includes('water_delete');
+    const hasManageColumn = canEditWaterItem || canDeleteWater;
+
+    const handleEditTotals = () => {
+      setEditTotals({ in: inCount, out: outCount });
+      setIsEditingTotals(true);
+    };
+
+    const saveEditTotals = () => {
+      const targetCenter = filterCenter;
+      const newRecords = [];
+      const diffIn = editTotals.in - inCount;
+      const diffOut = editTotals.out - outCount;
+
+      const today = new Date().toISOString().split('T')[0];
+
+      if (diffIn !== 0) {
+        newRecords.push({ id: Date.now(), date: today, size: 'ปรับยอด', amount: diffIn, center: targetCenter, location: 'ปรับปรุงยอด (Admin)', status: 'รับเข้า' });
+      }
+      if (diffOut !== 0) {
+        newRecords.push({ id: Date.now() + 1, date: today, size: 'ปรับยอด', amount: diffOut, center: targetCenter, location: 'ปรับปรุงยอด (Admin)', status: 'เบิกออก' });
+      }
+
+      if (newRecords.length > 0) {
+        setWaterStock([...newRecords, ...waterStock]);
+        addToast(`ปรับปรุงยอดสะสมคลัง ${targetCenter} สำเร็จ`, 'success');
+        addLog(currentUser, 'UPDATE', 'WATER', `Admin adjusted water totals for ${targetCenter}. In: ${inCount}->${editTotals.in}, Out: ${outCount}->${editTotals.out}`);
+      }
+      setIsEditingTotals(false);
+    };
+
+    const saveWater = (e) => {
+      e.preventDefault();
+      const newRec = { ...form, id: editingItem?.id || Date.now() }; 
+      
+      // บังคับให้เป็นศูนย์ของผู้ใช้ หากไม่ใช่ admin
+      if (currentUser.role !== 'admin') {
+        newRec.center = currentUser.center;
+      }
+
+      if (editingItem) {
+        setWaterStock(waterStock.map(w => w.id === editingItem.id ? newRec : w));
+        addLog(currentUser, 'UPDATE', 'WATER', `Updated water record`, editingItem, newRec);
+        addToast('แก้ไขข้อมูลน้ำดื่มแล้ว', 'success');
+      } else {
+        const recordsToAdd = [newRec];
+        let toastMsg = 'อัปเดตสต๊อกน้ำดื่มแล้ว';
+
+        // Auto-deduct from central if a sub-center receives stock
+        if (newRec.status === 'รับเข้า' && newRec.center !== 'ศูนย์กลาง') {
+          const autoDeductRec = {
+            id: Date.now() + 1,
+            date: newRec.date,
+            size: newRec.size,
+            amount: newRec.amount,
+            center: 'ศูนย์กลาง',
+            location: `จ่ายให้ศูนย์ฯ ${newRec.center}`,
+            status: 'เบิกออก',
+            isAutoTransfer: true
+          };
+          recordsToAdd.push(autoDeductRec);
+          toastMsg = `รับเข้า ${newRec.center} และตัดยอดจากศูนย์กลางแล้ว`;
+        }
+
+        setWaterStock([...recordsToAdd, ...waterStock]);
+        addLog(currentUser, 'CREATE', 'WATER', `Created water record(s)`, null, recordsToAdd);
+        addToast(toastMsg, 'success');
+      }
+      
+      setIsFormOpen(false);
+      setEditingItem(null);
+      setForm({ date: '', size: waterSizes[0] || '350ml', amount: 0, center: currentUser?.center || 'ศูนย์กลาง', location: '', status: currentUser?.role === 'admin' ? 'รับเข้า' : 'เบิกออก' });
+    };
+
+    const deleteWaterRecord = (id) => {
+      requestConfirm('ยืนยันการลบ', 'ยืนยันการลบรายการรับ-เบิกน้ำดื่มนี้ใช่หรือไม่?', () => {
+        const itemToDelete = waterStock.find(w => w.id === id);
+        setWaterStock(waterStock.filter(w => w.id !== id));
+        addLog(currentUser, 'DELETE', 'WATER', `Deleted water record`, itemToDelete, null);
+        addToast('ลบรายการน้ำดื่มแล้ว', 'info');
+      });
+    };
+
+    const handleAddSize = () => {
+      if (newSize.trim() && !waterSizes.includes(newSize.trim())) {
+        const addedSize = newSize.trim();
+        setWaterSizes([...waterSizes, addedSize]);
+        setForm({ ...form, size: addedSize });
+      }
+      setIsAddingSize(false);
+      setNewSize('');
+    };
+
+    return (
+      <div className="space-y-6">
+        <div>
+          <div className="flex justify-between items-center mb-3">
+            <span className="text-sm font-bold text-gray-500">สรุปภาพรวมคลังน้ำดื่ม <span className="text-[#1a3a8a]">(ศูนย์ฯ {filterCenter})</span></span>
+            {currentUser.role === 'admin' && !isEditingTotals && (
+              <button onClick={handleEditTotals} className="text-xs text-blue-600 hover:text-blue-800 flex items-center border border-blue-200 bg-blue-50 px-3 py-1.5 rounded-lg transition-colors shadow-sm font-medium">
+                <Edit2 size={14} className="mr-1"/> แก้ไขตัวเลขสะสม
+              </button>
+            )}
+            {currentUser.role === 'admin' && isEditingTotals && (
+              <div className="flex space-x-2 animate-in fade-in duration-200">
+                <button onClick={() => setIsEditingTotals(false)} className="text-xs text-gray-600 hover:text-gray-800 border border-gray-300 px-3 py-1.5 rounded-lg bg-white shadow-sm transition-colors">ยกเลิก</button>
+                <button onClick={saveEditTotals} className="text-xs text-white bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-lg shadow-sm font-bold transition-colors">บันทึกยอด</button>
+              </div>
+            )}
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-white p-4 rounded-xl shadow-sm border border-green-100 flex justify-between items-center transition-all duration-300">
+              <div>
+                <p className="text-sm text-gray-500 mb-1">รับเข้าสะสม</p>
+                {isEditingTotals ? (
+                  <input type="number" className="text-2xl font-bold text-green-600 w-full max-w-[140px] border-b-2 border-green-300 focus:border-green-600 outline-none bg-green-50/50 px-1 rounded-t transition-colors" value={editTotals.in} onChange={e => setEditTotals({...editTotals, in: Number(e.target.value)})} />
+                ) : (
+                  <p className="text-2xl font-bold text-green-600">{inCount}</p>
+                )}
+              </div>
+              <div className="p-3 bg-green-50 text-green-600 rounded-full"><Plus size={24} /></div>
+            </div>
+            <div className="bg-white p-4 rounded-xl shadow-sm border border-red-100 flex justify-between items-center transition-all duration-300">
+              <div>
+                <p className="text-sm text-gray-500 mb-1">เบิกออกสะสม</p>
+                {isEditingTotals ? (
+                  <input type="number" className="text-2xl font-bold text-red-600 w-full max-w-[140px] border-b-2 border-red-300 focus:border-red-600 outline-none bg-red-50/50 px-1 rounded-t transition-colors" value={editTotals.out} onChange={e => setEditTotals({...editTotals, out: Number(e.target.value)})} />
+                ) : (
+                  <div className="flex flex-col">
+                    <p className="text-2xl font-bold text-red-600">{outCount}</p>
+                    {supportOutCount > 0 && (
+                      <span className="text-[10px] text-gray-500 font-medium">(สนับสนุน: {supportOutCount}, ทั่วไป: {manualOutCount})</span>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="p-3 bg-red-50 text-red-600 rounded-full"><Minus size={24} /></div>
+            </div>
+            <div className="bg-white p-4 rounded-xl shadow-sm border border-blue-100 flex justify-between items-center transition-all duration-300">
+              <div>
+                <p className="text-sm text-gray-500 mb-1">คงเหลือปัจจุบัน</p>
+                <p className="text-2xl font-bold text-blue-600">{isEditingTotals ? (editTotals.in - editTotals.out) : balance}</p>
+              </div>
+              <div className="p-3 bg-blue-50 text-blue-600 rounded-full"><Droplets size={24} /></div>
+            </div>
+          </div>
+        </div>
+
+        {/* TABS & TABLES SECTION */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="p-4 border-b border-gray-100 bg-gray-50 flex flex-col md:flex-row justify-between items-center gap-4">
+            {/* Tabs */}
+            <div className="flex space-x-2 bg-gray-200/50 p-1 rounded-xl w-full md:w-auto overflow-x-auto no-scrollbar">
+              <button 
+                onClick={() => setActiveTab('general')} 
+                className={`px-4 py-2 text-sm font-bold rounded-lg whitespace-nowrap transition-all ${activeTab === 'general' ? 'bg-white shadow-sm text-[#1a3a8a]' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                ประวัติรับ-เบิก (ทั่วไป)
+              </button>
+              <button 
+                onClick={() => setActiveTab('support')} 
+                className={`px-4 py-2 text-sm font-bold rounded-lg whitespace-nowrap transition-all ${activeTab === 'support' ? 'bg-white shadow-sm text-rose-600' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                ประวัติเบิกจ่าย (สนับสนุน)
+              </button>
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center space-x-3 w-full md:w-auto justify-end">
+              {currentUser.role === 'admin' && (
+                <select 
+                  className="w-full sm:w-auto border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#1a3a8a] outline-none shadow-sm text-gray-700 bg-white"
+                  value={filterCenter}
+                  onChange={(e) => setFilterCenter(e.target.value)}
+                >
+                  <option value="ศูนย์กลาง">ศูนย์กลาง</option>
+                  {LOCATIONS.map(loc => (
+                    <option key={loc.name} value={loc.name}>ศูนย์ฯ {loc.name}</option>
+                  ))}
+                </select>
+              )}
+              {canAddWater && activeTab === 'general' && (
+                <button onClick={() => { setEditingItem(null); setForm({ date: '', size: waterSizes[0] || '350ml', amount: '', center: currentUser?.center || 'ศูนย์กลาง', location: '', status: currentUser?.role === 'admin' ? 'รับเข้า' : 'เบิกออก' }); setIsFormOpen(true); }} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm flex items-center space-x-2 hover:bg-blue-700 w-full md:w-auto justify-center">
+                  <Plus size={16} /> <span className="whitespace-nowrap">รับเข้า/เบิกออก</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="overflow-x-auto p-0">
+            {activeTab === 'general' && (
+              <table className="w-full text-left min-w-[800px] animate-in fade-in duration-300">
+                <thead className="bg-gray-50 text-xs text-gray-500 uppercase">
+                  <tr>
+                    <th className="px-6 py-3">วันที่</th>
+                    <th className="px-6 py-3">รายการ</th>
+                    <th className="px-6 py-3">ศูนย์ประสานงาน</th>
+                    <th className="px-6 py-3">สถานที่สนับสนุน/เก็บ</th>
+                    <th className="px-6 py-3">สถานะ</th>
+                    <th className="px-6 py-3 text-right">จำนวน (แพ็ค)</th>
+                    {hasManageColumn && <th className="px-6 py-3 text-right">จัดการ</th>}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {filtered.map(w => (
+                    <tr key={w.id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 text-sm whitespace-nowrap">{formatDate(w.date)}</td>
+                      <td className="px-6 py-4 text-sm font-medium">
+                        {w.size === 'ปรับยอด' ? <span className="text-blue-600">การปรับปรุงยอด (ระบบ)</span> : `น้ำดื่มขนาด ${w.size}`}
+                        {w.isAutoTransfer && <span className="ml-2 text-xs text-gray-400 font-normal">(ระบบตัดยอดอัตโนมัติ)</span>}
+                      </td>
+                      <td className="px-6 py-4 text-sm text-gray-600">{w.center}</td>
+                      <td className="px-6 py-4 text-sm text-gray-500">{w.location}</td>
+                      <td className="px-6 py-4 text-sm">
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${w.status === 'รับเข้า' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                          {w.status}
+                        </span>
+                      </td>
+                      <td className={`px-6 py-4 text-right font-bold ${w.status === 'รับเข้า' ? 'text-green-600' : 'text-amber-600'}`}>
+                        {w.status === 'รับเข้า' ? '+' : '-'}{w.amount}
+                      </td>
+                      {hasManageColumn && (
+                        <td className="px-6 py-4 text-right space-x-1 whitespace-nowrap">
+                          {w.size !== 'ปรับยอด' && !w.isAutoTransfer && (
+                            <>
+                              {canEditWaterItem && <button onClick={() => { setEditingItem(w); setForm(w); setIsFormOpen(true); }} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded" title="แก้ไข"><Edit2 size={16} /></button>}
+                              {canDeleteWater && <button onClick={() => deleteWaterRecord(w.id)} className="p-1.5 text-red-600 hover:bg-red-50 rounded" title="ลบ"><Trash2 size={16} /></button>}
+                            </>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                  {filtered.length === 0 && (
+                    <tr>
+                      <td colSpan={hasManageColumn ? "7" : "6"} className="px-6 py-8 text-center text-gray-500">ไม่พบประวัติรับ-เบิกน้ำดื่ม</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            )}
+            
+            {activeTab === 'support' && (
+              <table className="w-full text-left min-w-[800px] animate-in fade-in duration-300">
+                <thead className="bg-rose-50 text-xs text-rose-700 uppercase border-b border-gray-100">
+                  <tr>
+                    <th className="px-6 py-3">วันที่</th>
+                    <th className="px-6 py-3">ศูนย์ประสานงาน</th>
+                    <th className="px-6 py-3">ประเภทงาน</th>
+                    <th className="px-6 py-3">สถานที่สนับสนุน</th>
+                    <th className="px-6 py-3">สถานะ</th>
+                    <th className="px-6 py-3 text-right">หักจากคลัง (แพ็ค)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {supportFiltered.map(rec => (
+                    <tr key={`supp-${rec.id}`} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 text-sm whitespace-nowrap">{formatDate(rec.date)}</td>
+                      <td className="px-6 py-4 text-sm text-gray-600 font-bold">{rec.center}</td>
+                      <td className="px-6 py-4 text-sm font-medium">
+                        {rec.type}
+                        {rec.type === 'งานศพ' && rec.deceased && <span className="text-gray-500 text-xs ml-2">({rec.deceased})</span>}
+                      </td>
+                      <td className="px-6 py-4 text-sm text-gray-600">
+                        {rec.localLocation ? `${rec.localLocation} ` : ''}
+                        อ.{rec.location} ต.{rec.subDistrict}
+                      </td>
+                      <td className="px-6 py-4 text-sm">
+                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-rose-100 text-rose-700">
+                          เบิกออก
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-right font-bold text-rose-600">
+                        -{rec.water}
+                      </td>
+                    </tr>
+                  ))}
+                  {supportFiltered.length === 0 && (
+                    <tr>
+                      <td colSpan="6" className="px-6 py-8 text-center text-gray-500">ไม่พบประวัติการเบิกน้ำเพื่อสนับสนุนกิจกรรม</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+
+        {/* Modal Form */}
+        {isFormOpen && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200">
+              <div className="p-6 bg-blue-600 text-white flex justify-between items-center">
+                <h3 className="text-xl font-bold">{editingItem ? 'แก้ไขรับ-เบิกน้ำดื่ม' : 'บันทึกรับ-เบิกน้ำดื่ม'}</h3>
+                <button type="button" onClick={() => setIsFormOpen(false)}><X size={24} /></button>
+              </div>
+              <form onSubmit={saveWater} className="p-6 space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-1">วันที่</label>
+                    <input type="date" required className="w-full border p-2 rounded-lg" value={form.date} onChange={e => setForm({...form, date: e.target.value})} />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">สถานะ</label>
+                    <select className="w-full border p-2 rounded-lg" value={form.status} onChange={e => setForm({...form, status: e.target.value})}>
+                      {currentUser.role === 'admin' && <option value="รับเข้า">รับเข้า (+)</option>}
+                      <option value="เบิกออก">เบิกออก (-)</option>
+                    </select>
+                  </div>
+                </div>
+
+                {currentUser.role === 'admin' && (
+                  <div>
+                    <label className="block text-sm font-medium mb-1">จ่ายเข้า/เบิกจาก ศูนย์ประสานงาน</label>
+                    <select className="w-full border p-2 rounded-lg bg-yellow-50 focus:bg-white" value={form.center} onChange={e => setForm({...form, center: e.target.value})}>
+                      <option value="ศูนย์กลาง">ศูนย์กลาง</option>
+                      {LOCATIONS.map(l => <option key={l.name} value={l.name}>ศูนย์ฯ {l.name}</option>)}
+                    </select>
+                  </div>
+                )}
+
+                <div className="relative">
+                    <label className="block text-sm font-medium mb-1 flex justify-between items-center">
+                      ขนาดบรรจุ
+                      {!isAddingSize && currentUser.role === 'admin' && (
+                        <button type="button" onClick={() => setIsAddingSize(true)} className="text-xs text-blue-600 hover:underline flex items-center">
+                          <Plus size={12} className="mr-1" /> เพิ่มขนาดใหม่
+                        </button>
+                      )}
+                    </label>
+
+                    {isAddingSize ? (
+                      <div className="flex space-x-2">
+                        <input
+                          type="text"
+                          autoFocus
+                          className="w-full border p-2 rounded-lg text-sm"
+                          placeholder="เช่น 1500ml, ถัง 18L"
+                          value={newSize}
+                          onChange={e => setNewSize(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddSize())}
+                        />
+                        <button type="button" onClick={handleAddSize} className="bg-blue-600 text-white px-3 py-1 rounded-lg text-sm whitespace-nowrap">ตกลง</button>
+                        <button type="button" onClick={() => setIsAddingSize(false)} className="bg-gray-200 text-gray-700 px-3 py-1 rounded-lg text-sm whitespace-nowrap">ยกเลิก</button>
+                      </div>
+                    ) : (
+                      <select className="w-full border p-2 rounded-lg" value={form.size} onChange={e => setForm({...form, size: e.target.value})}>
+                        {waterSizes.map(size => (
+                          <option key={size} value={size}>{size}</option>
+                        ))}
+                      </select>
+                    )}
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-1">จำนวน (แพ็ค/ถัง)</label>
+                  <input type="number" required min="1" className="w-full border p-2 rounded-lg" value={form.amount} onChange={e => setForm({...form, amount: e.target.value})} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">สถานที่สนับสนุน / คลัง</label>
+                  <input type="text" required className="w-full border p-2 rounded-lg" placeholder="ระบุคลังหรือชื่อวัด/งานที่มอบ" value={form.location} onChange={e => setForm({...form, location: e.target.value})} />
+                </div>
+                <div className="pt-4 flex justify-end space-x-3 border-t mt-4">
+                  <button type="button" onClick={() => setIsFormOpen(false)} className="px-6 py-2 rounded-lg border hover:bg-gray-50">ยกเลิก</button>
+                  <button type="submit" className="px-6 py-2 rounded-lg bg-blue-600 text-white font-bold hover:bg-blue-700">บันทึกรายการ</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const UniformView = () => {
+    const [isFormOpen, setIsFormOpen] = useState(false);
+    const [filterCenter, setFilterCenter] = useState(currentUser?.role === 'admin' ? 'ศูนย์กลาง' : currentUser?.center);
+    const [activeTab, setActiveTab] = useState('history'); // 'history' | 'summary'
+    
+    // States for Admin Management
+    const [isManagingTypes, setIsManagingTypes] = useState(false);
+    const [isManagingSizes, setIsManagingSizes] = useState(false);
+    const [isEditingStock, setIsEditingStock] = useState(false);
+    const [editStockData, setEditStockData] = useState({});
+    
+    // Size Add State
+    const [newItemText, setNewItemText] = useState('');
+    const [editingItemText, setEditingItemText] = useState(null);
+    
+    // Type Image & Edit State
+    const [editingTypeData, setEditingTypeData] = useState(null); // { originalName, name, image }
+
+    const [form, setForm] = useState({ date: '', type: uniformTypes[0] || '', size: uniformSizes[0] || '', amount: 0, center: currentUser?.center || 'ศูนย์กลาง', receiver: '', note: '', status: currentUser?.role === 'admin' ? 'รับเข้า' : 'เบิกออก' });
+
+    const baseFiltered = filterByCenter(uniformStock);
+
+    let filtered = [];
+    if (currentUser.role === 'admin') {
+      filtered = filterCenter === 'ทั้งหมด' ? baseFiltered : baseFiltered.filter(w => w.center === filterCenter);
+    } else {
+      filtered = baseFiltered;
+    }
+
+    const inCount = filtered.filter(w => w.status === 'รับเข้า').reduce((a, b) => a + Number(b.amount || 0), 0);
+    const outCount = filtered.filter(w => w.status === 'เบิกออก').reduce((a, b) => a + Number(b.amount || 0), 0);
+    const balance = inCount - outCount;
+
+    // คำนวณสรุปสต๊อกคงเหลือแยกตาม ประเภท และดึงทุกไซส์มาแสดงแนวนอน
+    const groupedStockSummary = useMemo(() => {
+      return uniformTypes.map(type => {
+        const sizesData = uniformSizes.map(size => {
+          const amount = filtered
+            .filter(item => item.type === type && item.size === size)
+            .reduce((sum, item) => item.status === 'รับเข้า' ? sum + Number(item.amount) : sum - Number(item.amount), 0);
+          return { size, amount };
+        });
+        const total = sizesData.reduce((sum, s) => sum + s.amount, 0);
+        return { type, sizes: sizesData, total };
+      });
+    }, [filtered, uniformTypes, uniformSizes]);
+
+    const handleEditStock = () => {
+      const currentStock = {};
+      groupedStockSummary.forEach(group => {
+        group.sizes.forEach(s => {
+          currentStock[`${group.type}_${s.size}`] = s.amount;
+        });
+      });
+      setEditStockData(currentStock);
+      setIsEditingStock(true);
+    };
+
+    const saveStockEdit = () => {
+      const targetCenter = filterCenter === 'ทั้งหมด' ? 'ศูนย์กลาง' : filterCenter;
+      const today = new Date().toISOString().split('T')[0];
+      const newRecords = [];
+
+      groupedStockSummary.forEach(group => {
+        group.sizes.forEach(s => {
+          const key = `${group.type}_${s.size}`;
+          const oldVal = s.amount;
+          const newVal = editStockData[key] !== undefined ? editStockData[key] : s.amount;
+          const diff = newVal - oldVal;
+
+          if (diff !== 0) {
+            newRecords.push({
+              id: Date.now() + Math.floor(Math.random() * 10000), // Random to ensure uniqueness in loop
+              date: today,
+              type: group.type,
+              size: s.size,
+              amount: Math.abs(diff),
+              center: targetCenter,
+              receiver: 'ระบบ (ปรับยอด)',
+              note: 'ปรับปรุงยอดสต๊อก (Admin)',
+              status: diff > 0 ? 'รับเข้า' : 'เบิกออก',
+              isAdjustment: true
+            });
+          }
+        });
+      });
+
+      if (newRecords.length > 0) {
+        setUniformStock([...newRecords, ...uniformStock]);
+        addToast(`ปรับปรุงยอดสต๊อกคลัง ${targetCenter} สำเร็จ`, 'success');
+        addLog(currentUser, 'UPDATE', 'UNIFORM', `Admin adjusted uniform stock for ${targetCenter}`);
+      }
+      setIsEditingStock(false);
+    };
+
+    const saveUniform = (e) => {
+      e.preventDefault();
+      const newRec = { ...form, id: editingItem?.id || Date.now() }; 
+      
+      if (currentUser.role !== 'admin') {
+        newRec.center = currentUser.center;
+      }
+
+      if (editingItem) {
+        setUniformStock(uniformStock.map(w => w.id === editingItem.id ? newRec : w));
+        addLog(currentUser, 'UPDATE', 'UNIFORM', `Updated uniform record`, editingItem, newRec);
+        addToast('แก้ไขข้อมูลเครื่องแบบแล้ว', 'success');
+      } else {
+        setUniformStock([newRec, ...uniformStock]);
+        addLog(currentUser, 'CREATE', 'UNIFORM', `Created uniform record`, null, newRec);
+        addToast('อัปเดตสต๊อกเครื่องแบบแล้ว', 'success');
+      }
+      
+      setIsFormOpen(false);
+      setEditingItem(null);
+      setForm({ date: '', type: uniformTypes[0] || '', size: uniformSizes[0] || '', amount: 0, center: currentUser?.center || 'ศูนย์กลาง', receiver: '', note: '', status: currentUser?.role === 'admin' ? 'รับเข้า' : 'เบิกออก' });
+    };
+
+    const deleteUniformRecord = (id) => {
+      requestConfirm('ยืนยันการลบ', 'ยืนยันการลบรายการรับ-เบิกเครื่องแบบนี้ใช่หรือไม่?', () => {
+        const itemToDelete = uniformStock.find(w => w.id === id);
+        setUniformStock(uniformStock.filter(w => w.id !== id));
+        addLog(currentUser, 'DELETE', 'UNIFORM', `Deleted uniform record`, itemToDelete, null);
+        addToast('ลบรายการเครื่องแบบแล้ว', 'info');
+      });
+    };
+
+    // --- Admin Manage Handlers ---
+    const handleAddManageItem = (type) => {
+      const trimmed = newItemText.trim();
+      if (!trimmed) return;
+      if (type === 'type' && !uniformTypes.includes(trimmed)) {
+        setUniformTypes([...uniformTypes, trimmed]);
+        setForm({...form, type: trimmed});
+      } else if (type === 'size' && !uniformSizes.includes(trimmed)) {
+        setUniformSizes([...uniformSizes, trimmed]);
+        setForm({...form, size: trimmed});
+      }
+      setNewItemText('');
+      addToast('เพิ่มข้อมูลสำเร็จ', 'success');
+    };
+
+    const handleSaveTypeEdit = () => {
+      const oldVal = editingTypeData.originalName;
+      const newVal = editingTypeData.name.trim();
+      const newImg = editingTypeData.image.trim();
+
+      if (!newVal) return;
+
+      if (newVal !== oldVal) {
+         if (uniformTypes.includes(newVal)) {
+             addToast('ชื่อประเภทนี้มีอยู่แล้ว', 'error');
+             return;
+         }
+         setUniformTypes(uniformTypes.map(t => t === oldVal ? newVal : t));
+         if (form.type === oldVal) setForm({...form, type: newVal});
+         
+         // Update related stock items to new type name
+         setUniformStock(prev => prev.map(s => s.type === oldVal ? { ...s, type: newVal } : s));
+      }
+
+      // Update images dict
+      setUniformImages(prev => {
+         const updated = { ...prev };
+         if (newVal !== oldVal) delete updated[oldVal];
+         if (newImg) updated[newVal] = newImg;
+         else delete updated[newVal];
+         return updated;
+      });
+
+      setEditingTypeData(null);
+      addToast('อัปเดตข้อมูลประเภทสำเร็จ', 'success');
+    };
+
+    const handleEditManageItem = (type, oldVal, newVal) => {
+      const trimmed = newVal.trim();
+      if (!trimmed || trimmed === oldVal) { setEditingItemText(null); return; }
+      
+      if (type === 'size' && !uniformSizes.includes(trimmed)) {
+        setUniformSizes(uniformSizes.map(s => s === oldVal ? trimmed : s));
+        if (form.size === oldVal) setForm({...form, size: trimmed});
+        // Note: size history remains same conceptually, but good practice to update
+        setUniformStock(prev => prev.map(s => s.size === oldVal ? { ...s, size: trimmed } : s));
+      }
+      setEditingItemText(null);
+      addToast('แก้ไขข้อมูลสำเร็จ', 'success');
+    };
+
+    const handleDeleteManageItem = (type, val) => {
+      requestConfirm('ยืนยันการลบ', `ลบ "${val}" ใช่หรือไม่?`, () => {
+        if (type === 'type') {
+          const newArr = uniformTypes.filter(t => t !== val);
+          setUniformTypes(newArr);
+          if (form.type === val) setForm({...form, type: newArr[0] || ''});
+          
+          setUniformImages(prev => {
+             const updated = { ...prev };
+             delete updated[val];
+             return updated;
+          });
+        } else {
+          const newArr = uniformSizes.filter(s => s !== val);
+          setUniformSizes(newArr);
+          if (form.size === val) setForm({...form, size: newArr[0] || ''});
+        }
+        addToast('ลบข้อมูลสำเร็จ', 'info');
+      });
+    };
+
+    return (
+      <div className="space-y-6">
+        <div>
+          <div className="flex justify-between items-center mb-3">
+            <span className="text-sm font-bold text-gray-500">สรุปภาพรวมคลังเครื่องแบบ {filterCenter !== 'ทั้งหมด' && <span className="text-[#1a3a8a]">(ศูนย์ฯ {filterCenter})</span>}</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-white p-4 rounded-xl shadow-sm border border-green-100 flex justify-between items-center transition-all duration-300">
+              <div>
+                <p className="text-sm text-gray-500 mb-1">รับเข้าสะสม</p>
+                <p className="text-2xl font-bold text-green-600">{inCount}</p>
+              </div>
+              <div className="p-3 bg-green-50 text-green-600 rounded-full"><Plus size={24} /></div>
+            </div>
+            <div className="bg-white p-4 rounded-xl shadow-sm border border-red-100 flex justify-between items-center transition-all duration-300">
+              <div>
+                <p className="text-sm text-gray-500 mb-1">เบิกออกสะสม</p>
+                <p className="text-2xl font-bold text-red-600">{outCount}</p>
+              </div>
+              <div className="p-3 bg-red-50 text-red-600 rounded-full"><Minus size={24} /></div>
+            </div>
+            <div className="bg-white p-4 rounded-xl shadow-sm border border-blue-100 flex justify-between items-center transition-all duration-300">
+              <div>
+                <p className="text-sm text-gray-500 mb-1">คงเหลือปัจจุบัน</p>
+                <p className="text-2xl font-bold text-blue-600">{balance}</p>
+              </div>
+              <div className="p-3 bg-blue-50 text-blue-600 rounded-full"><Shirt size={24} /></div>
+            </div>
+          </div>
+        </div>
+
+        {/* TABS & TABLES SECTION */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="p-4 border-b border-gray-100 bg-gray-50 flex flex-col md:flex-row justify-between items-center gap-4">
+            {/* Tabs */}
+            <div className="flex space-x-2 bg-gray-200/50 p-1 rounded-xl w-full md:w-auto overflow-x-auto no-scrollbar">
+              <button 
+                onClick={() => setActiveTab('history')} 
+                className={`px-4 py-2 text-sm font-bold rounded-lg whitespace-nowrap transition-all ${activeTab === 'history' ? 'bg-white shadow-sm text-[#1a3a8a]' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                ประวัติรับ-เบิก
+              </button>
+              <button 
+                onClick={() => setActiveTab('summary')} 
+                className={`px-4 py-2 text-sm font-bold rounded-lg whitespace-nowrap transition-all ${activeTab === 'summary' ? 'bg-white shadow-sm text-amber-600' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                สต๊อกคงเหลือแยกประเภท
+              </button>
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center space-x-3 w-full md:w-auto justify-end">
+              {currentUser.role === 'admin' && (
+                <select 
+                  className="w-full sm:w-auto border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#1a3a8a] outline-none shadow-sm text-gray-700 bg-white"
+                  value={filterCenter}
+                  onChange={(e) => setFilterCenter(e.target.value)}
+                >
+                  <option value="ทั้งหมด">ดูทุกศูนย์ประสานงาน</option>
+                  <option value="ศูนย์กลาง">ศูนย์กลาง</option>
+                  {LOCATIONS.map(loc => (
+                    <option key={loc.name} value={loc.name}>ศูนย์ฯ {loc.name}</option>
+                  ))}
+                </select>
+              )}
+              {activeTab === 'history' && (
+                <button onClick={() => { setEditingItem(null); setForm({ date: '', type: uniformTypes[0] || '', size: uniformSizes[0] || '', amount: '', center: currentUser?.center || 'ศูนย์กลาง', receiver: '', note: '', status: currentUser?.role === 'admin' ? 'รับเข้า' : 'เบิกออก' }); setIsFormOpen(true); }} className="bg-amber-500 text-white px-4 py-2 rounded-lg text-sm flex items-center space-x-2 hover:bg-amber-600 w-full md:w-auto justify-center transition-colors">
+                  <Plus size={16} /> <span className="whitespace-nowrap">รับเข้า/เบิกออก</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="overflow-x-auto p-0">
+            {activeTab === 'history' && (
+              <table className="w-full text-left text-xs xl:text-sm animate-in fade-in duration-300">
+                <thead className="bg-gray-50 text-[10px] xl:text-xs text-gray-500 uppercase leading-tight">
+                  <tr>
+                    <th className="px-3 py-3 whitespace-nowrap">วันที่</th>
+                    <th className="px-3 py-3 min-w-[120px]">รายการ</th>
+                    <th className="px-3 py-3 min-w-[150px]">มอบให้กับ/รายละเอียด</th>
+                    <th className="px-3 py-3 text-center whitespace-nowrap">สถานะ</th>
+                    <th className="px-3 py-3 text-right whitespace-nowrap">จำนวน</th>
+                    <th className="px-3 py-3 text-right whitespace-nowrap">จัดการ</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {filtered.map(w => (
+                    <tr key={w.id} className="hover:bg-gray-50">
+                      <td className="px-3 py-3 whitespace-nowrap">{formatDate(w.date)}</td>
+                      <td className="px-3 py-3 break-words">
+                        {w.isAdjustment ? <span className="text-blue-600 font-bold">ปรับปรุงยอดสต๊อก</span> : <span className="font-bold text-gray-800">{w.type}</span>}
+                        <span className="ml-1 text-[#1a3a8a] font-medium">({w.size})</span>
+                        {currentUser.role === 'admin' && <div className="text-[10px] text-gray-400 mt-0.5">ศูนย์ฯ {w.center}</div>}
+                      </td>
+                      <td className="px-3 py-3 break-words">
+                        <div className="font-medium text-gray-700">{w.receiver || '-'}</div>
+                        <div className="text-xs text-gray-500 mt-0.5">{w.note}</div>
+                      </td>
+                      <td className="px-3 py-3 text-center whitespace-nowrap">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] xl:text-xs font-medium ${w.status === 'รับเข้า' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                          {w.status}
+                        </span>
+                      </td>
+                      <td className={`px-3 py-3 text-right font-black whitespace-nowrap ${w.status === 'รับเข้า' ? 'text-green-600' : 'text-amber-600'}`}>
+                        {w.status === 'รับเข้า' ? '+' : '-'}{w.amount}
+                      </td>
+                      <td className="px-3 py-3 text-right space-x-1 whitespace-nowrap">
+                        {!w.isAdjustment && (
+                          <>
+                            <button onClick={() => { setEditingItem(w); setForm(w); setIsFormOpen(true); }} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded" title="แก้ไข"><Edit2 size={14} /></button>
+                            <button onClick={() => deleteUniformRecord(w.id)} className="p-1.5 text-red-600 hover:bg-red-50 rounded" title="ลบ"><Trash2 size={14} /></button>
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                  {filtered.length === 0 && (
+                    <tr>
+                      <td colSpan="6" className="px-3 py-8 text-center text-gray-500">ไม่พบประวัติรับ-เบิกเครื่องแบบ</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            )}
+
+            {activeTab === 'summary' && (
+              <div className="p-6 bg-gray-50/50 animate-in fade-in duration-300">
+                
+                {/* Admin Management Controls */}
+                {currentUser.role === 'admin' && (
+                  <div className="flex flex-wrap justify-end gap-3 mb-6">
+                    {isEditingStock ? (
+                      <div className="flex space-x-2 animate-in fade-in duration-200">
+                        <button onClick={() => setIsEditingStock(false)} className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm font-bold shadow-sm hover:bg-gray-50 transition-colors">ยกเลิก</button>
+                        <button onClick={saveStockEdit} className="bg-amber-500 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-sm hover:bg-amber-600 transition-colors">บันทึกยอดสต๊อก</button>
+                      </div>
+                    ) : (
+                      <>
+                        <button onClick={handleEditStock} className="bg-white border border-blue-300 text-blue-700 px-4 py-2 rounded-lg text-sm font-bold flex items-center shadow-sm hover:bg-blue-50 transition-colors">
+                          <Edit2 size={16} className="mr-2" /> แก้ไขจำนวนสต๊อก
+                        </button>
+                        <button 
+                          onClick={() => { setForm({ date: '', type: uniformTypes[0] || '', size: uniformSizes[0] || '', amount: 0, center: currentUser?.center || 'ศูนย์กลาง', receiver: '', note: '', status: 'รับเข้า' }); setIsManagingTypes(true); setIsFormOpen(true); }} 
+                          className="bg-white border border-amber-300 text-amber-700 px-4 py-2 rounded-lg text-sm font-bold flex items-center shadow-sm hover:bg-amber-50 transition-colors"
+                        >
+                          <Wrench size={16} className="mr-2" /> จัดการประเภท
+                        </button>
+                        <button 
+                          onClick={() => { setForm({ date: '', type: uniformTypes[0] || '', size: uniformSizes[0] || '', amount: 0, center: currentUser?.center || 'ศูนย์กลาง', receiver: '', note: '', status: 'รับเข้า' }); setIsManagingSizes(true); setIsFormOpen(true); }} 
+                          className="bg-white border border-amber-300 text-amber-700 px-4 py-2 rounded-lg text-sm font-bold flex items-center shadow-sm hover:bg-amber-50 transition-colors"
+                        >
+                          <Wrench size={16} className="mr-2" /> จัดการไซส์
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {groupedStockSummary.length > 0 ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {groupedStockSummary.map((item, idx) => (
+                      <div key={idx} className="bg-white border border-gray-200 rounded-3xl p-5 flex flex-col items-center hover:shadow-xl transition-shadow duration-300">
+                        {/* Image/Icon & Title */}
+                        <div className="w-full flex justify-center mb-4 min-h-[120px] relative">
+                          {uniformImages[item.type] ? (
+                            <img src={uniformImages[item.type]} alt={item.type} className="h-32 w-auto object-contain drop-shadow-md" />
+                          ) : (
+                            <Shirt size={100} fill="#111827" strokeWidth={0} className="text-gray-900 drop-shadow-md" />
+                          )}
+                        </div>
+                        <h4 className="text-2xl font-black italic text-gray-900 mb-6">{item.type}</h4>
+                        
+                        {/* Flexible Grid for Sizes */}
+                        <div className="w-full flex flex-wrap justify-center gap-2">
+                           {item.sizes.map(s => (
+                             <div key={s.size} className={`flex flex-col items-center justify-center bg-gray-50 border rounded-xl py-2 px-3 min-w-[50px] flex-grow max-w-[80px] ${isEditingStock ? 'border-amber-200 bg-amber-50/30' : 'border-gray-100'}`}>
+                               <span className="text-xs font-black italic text-gray-800 mb-1">{s.size}</span>
+                               {isEditingStock ? (
+                                 <div className="flex flex-col items-center space-y-1 w-full">
+                                    <input 
+                                       type="number"
+                                       className="w-full max-w-[50px] border border-amber-300 rounded text-center text-sm font-bold text-gray-900 focus:ring-2 focus:ring-amber-500 outline-none px-1"
+                                       value={editStockData[`${item.type}_${s.size}`] ?? s.amount}
+                                       onChange={(e) => setEditStockData({...editStockData, [`${item.type}_${s.size}`]: Number(e.target.value)})}
+                                    />
+                                    <button type="button" onClick={() => setEditStockData({...editStockData, [`${item.type}_${s.size}`]: 0})} className="text-red-400 hover:text-red-600 p-0.5 transition-colors" title="ล้างสต๊อก">
+                                       <Trash2 size={12} />
+                                    </button>
+                                 </div>
+                               ) : (
+                                 <span className={`text-lg font-black ${s.amount === 0 ? 'text-gray-300' : s.amount < 10 ? 'text-red-500' : 'text-gray-900'}`}>
+                                   {s.amount}
+                                 </span>
+                               )}
+                             </div>
+                           ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-10 text-gray-500">ยังไม่มีข้อมูลสต๊อกคงเหลือ</div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Modal Form */}
+        {isFormOpen && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl relative animate-in fade-in zoom-in duration-200">
+              <div className="p-6 bg-amber-500 text-white flex justify-between items-center">
+                <h3 className="text-xl font-bold">
+                  {isManagingTypes ? 'จัดการประเภทเครื่องแบบ' : isManagingSizes ? 'จัดการไซส์เครื่องแบบ' : (editingItem ? 'แก้ไขรับ-เบิกเครื่องแบบ' : 'บันทึกรับ-เบิกเครื่องแบบ')}
+                </h3>
+                <button type="button" onClick={() => { setIsFormOpen(false); setIsManagingTypes(false); setIsManagingSizes(false); setEditingTypeData(null); setEditingItemText(null); }}><X size={24} /></button>
+              </div>
+
+              {/* View: Admin Managing Types or Sizes */}
+              {isManagingTypes || isManagingSizes ? (
+                <div className="p-6 h-[60vh] flex flex-col bg-gray-50">
+                  <div className="flex justify-between items-center mb-4">
+                    <h4 className="text-lg font-bold text-gray-800">
+                      {isManagingTypes ? 'จัดการประเภทเครื่องแบบ' : 'จัดการไซส์เครื่องแบบ'}
+                    </h4>
+                    <button type="button" onClick={() => { setIsManagingTypes(false); setIsManagingSizes(false); setEditingTypeData(null); setEditingItemText(null); }} className="text-gray-500 hover:text-gray-800"><X size={20}/></button>
+                  </div>
+                  <div className="flex space-x-2 mb-4">
+                     <input type="text" value={newItemText} onChange={e=>setNewItemText(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddManageItem(isManagingTypes ? 'type' : 'size'))} className="border p-2 rounded-lg w-full text-sm outline-none focus:ring-2 focus:ring-amber-500" placeholder={isManagingTypes ? "เพิ่มประเภทใหม่..." : "เพิ่มไซส์ใหม่..."}/>
+                     <button type="button" onClick={() => handleAddManageItem(isManagingTypes ? 'type' : 'size')} className="bg-amber-500 text-white px-4 rounded-lg text-sm font-bold whitespace-nowrap hover:bg-amber-600">เพิ่ม</button>
+                  </div>
+                  
+                  <ul className="flex-1 overflow-y-auto divide-y border rounded-lg bg-white shadow-sm">
+                    {isManagingTypes ? uniformTypes.map(t => (
+                      <li key={t} className="p-3 flex flex-col sm:flex-row sm:justify-between sm:items-center text-sm hover:bg-gray-50 transition-colors">
+                         {editingTypeData?.originalName === t ? (
+                             <div className="flex-1 flex flex-col space-y-2 sm:space-y-0 sm:flex-row sm:space-x-2 mr-2">
+                                <input
+                                    autoFocus
+                                    value={editingTypeData.name}
+                                    onChange={(e) => setEditingTypeData({...editingTypeData, name: e.target.value})}
+                                    className="border p-2 rounded w-full outline-none focus:ring-1 focus:ring-amber-500"
+                                    placeholder="ชื่อประเภท"
+                                />
+                                <input
+                                    value={editingTypeData.image}
+                                    onChange={(e) => setEditingTypeData({...editingTypeData, image: e.target.value})}
+                                    className="border p-2 rounded w-full outline-none focus:ring-1 focus:ring-amber-500 text-xs"
+                                    placeholder="URL รูปภาพ (ถ้ามี)"
+                                />
+                                <div className="flex space-x-2 pt-2 sm:pt-0 items-center justify-end">
+                                  <button type="button" onClick={handleSaveTypeEdit} className="bg-green-500 text-white px-3 py-1.5 rounded font-bold whitespace-nowrap hover:bg-green-600">บันทึก</button>
+                                  <button type="button" onClick={() => setEditingTypeData(null)} className="bg-gray-300 text-gray-700 px-3 py-1.5 rounded font-bold whitespace-nowrap hover:bg-gray-400">ยกเลิก</button>
+                                </div>
+                             </div>
+                         ) : (
+                             <div className="flex items-center space-x-3 mb-2 sm:mb-0">
+                               {uniformImages[t] ? (
+                                 <img src={uniformImages[t]} alt={t} className="w-8 h-8 object-contain drop-shadow-sm" />
+                               ) : (
+                                 <div className="w-8 h-8 bg-gray-100 rounded-lg flex items-center justify-center text-gray-400 border"><Shirt size={16}/></div>
+                               )}
+                               <span className="font-medium text-gray-700">{t}</span>
+                             </div>
+                         )}
+                         {editingTypeData?.originalName !== t && (
+                             <div className="flex space-x-2 justify-end">
+                               <button type="button" onClick={() => setEditingTypeData({ originalName: t, name: t, image: uniformImages[t] || '' })} className="text-blue-500 hover:bg-blue-50 p-1.5 rounded" title="แก้ไข / ใส่รูป"><Edit2 size={16}/></button>
+                               <button type="button" onClick={() => handleDeleteManageItem('type', t)} className="text-red-500 hover:bg-red-50 p-1.5 rounded" title="ลบ"><Trash2 size={16}/></button>
+                             </div>
+                         )}
+                      </li>
+                    )) : uniformSizes.map(s => (
+                      <li key={s} className="p-3 flex justify-between items-center text-sm hover:bg-gray-50 transition-colors">
+                         {editingItemText === s ? (
+                             <input 
+                                autoFocus 
+                                defaultValue={s} 
+                                onBlur={(e) => handleEditManageItem('size', s, e.target.value)} 
+                                onKeyDown={(e) => {
+                                   if(e.key === 'Enter') { e.preventDefault(); handleEditManageItem('size', s, e.target.value); }
+                                   if(e.key === 'Escape') setEditingItemText(null);
+                                }} 
+                                className="border p-1 rounded w-full mr-2 outline-none focus:ring-1 focus:ring-amber-500"
+                             />
+                         ) : (
+                             <span className="font-medium text-gray-700">{s}</span>
+                         )}
+                         <div className="flex space-x-2 ml-4">
+                           {editingItemText !== s && (
+                             <>
+                               <button type="button" onClick={() => setEditingItemText(s)} className="text-blue-500 hover:bg-blue-50 p-1 rounded" title="แก้ไข"><Edit2 size={16}/></button>
+                               <button type="button" onClick={() => handleDeleteManageItem('size', s)} className="text-red-500 hover:bg-red-50 p-1 rounded" title="ลบ"><Trash2 size={16}/></button>
+                             </>
+                           )}
+                         </div>
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="mt-4 text-right">
+                     <button type="button" onClick={() => { setIsManagingTypes(false); setIsManagingSizes(false); }} className="px-6 py-2 bg-gray-200 text-gray-800 rounded-lg text-sm font-bold hover:bg-gray-300">เสร็จสิ้น</button>
+                  </div>
+                </div>
+              ) : (
+                /* View: Main Form */
+                <form onSubmit={saveUniform} className="p-6 space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-1">วันที่</label>
+                      <input type="date" required className="w-full border p-2 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none" value={form.date} onChange={e => setForm({...form, date: e.target.value})} />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">สถานะ</label>
+                      <select className="w-full border p-2 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none" value={form.status} onChange={e => setForm({...form, status: e.target.value})}>
+                        {currentUser.role === 'admin' && <option value="รับเข้า">รับเข้า (+)</option>}
+                        <option value="เบิกออก">เบิกออก (-)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {currentUser.role === 'admin' && (
+                    <div>
+                      <label className="block text-sm font-medium mb-1">ศูนย์ประสานงาน (เจ้าของสต๊อก)</label>
+                      <select required className="w-full border p-2 rounded-lg bg-yellow-50 focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none" value={form.center} onChange={e => setForm({...form, center: e.target.value})}>
+                        <option value="ศูนย์กลาง">ศูนย์กลาง</option>
+                        {LOCATIONS.map(l => <option key={l.name} value={l.name}>ศูนย์ฯ {l.name}</option>)}
+                      </select>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-1 flex justify-between items-center">
+                        ประเภทเครื่องแบบ
+                        {currentUser.role === 'admin' && (
+                          <button type="button" onClick={() => setIsManagingTypes(true)} className="text-xs text-amber-600 hover:underline flex items-center">
+                            <Wrench size={12} className="mr-1" /> จัดการประเภท
+                          </button>
+                        )}
+                      </label>
+                      <select required className="w-full border p-2 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none" value={form.type} onChange={e => setForm({...form, type: e.target.value})}>
+                        {uniformTypes.map(type => (
+                          <option key={type} value={type}>{type}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1 flex justify-between items-center">
+                        ไซส์ (Size)
+                        {currentUser.role === 'admin' && (
+                          <button type="button" onClick={() => setIsManagingSizes(true)} className="text-xs text-amber-600 hover:underline flex items-center">
+                            <Wrench size={12} className="mr-1" /> จัดการไซส์
+                          </button>
+                        )}
+                      </label>
+                      <select required className="w-full border p-2 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none" value={form.size} onChange={e => setForm({...form, size: e.target.value})}>
+                        {uniformSizes.map(size => (
+                          <option key={size} value={size}>{size}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-1">จำนวน (ตัว/ใบ)</label>
+                      <input type="number" required min="1" className="w-full border p-2 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none" value={form.amount} onChange={e => setForm({...form, amount: e.target.value})} />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">ผู้รับ / ผู้ที่เกี่ยวข้อง</label>
+                      <input type="text" className="w-full border p-2 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none" placeholder="เช่น ชื่อพนักงาน" value={form.receiver} onChange={e => setForm({...form, receiver: e.target.value})} />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium mb-1">หมายเหตุเพิ่มเติม</label>
+                    <textarea rows="2" className="w-full border p-2 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none" value={form.note} onChange={e => setForm({...form, note: e.target.value})}></textarea>
+                  </div>
+
+                  <div className="pt-4 flex justify-end space-x-3 border-t mt-4">
+                    <button type="button" onClick={() => setIsFormOpen(false)} className="px-6 py-2 rounded-lg border hover:bg-gray-50 transition-colors">ยกเลิก</button>
+                    <button type="submit" className="px-6 py-2 rounded-lg bg-amber-500 text-white font-bold hover:bg-amber-600 transition-colors">บันทึกรายการ</button>
+                  </div>
+                </form>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const UsersView = () => {
+    const [isFormOpen, setIsFormOpen] = useState(false);
+    const [searchTerm, setSearchTerm] = useState('');
+    const [form, setForm] = useState({ 
+      id: null, name: '', username: '', password: '', role: 'user', center: 'พังโคน', avatar: '', permissions: [] 
+    });
+
+    const filteredUsers = users.filter(u => u.name.toLowerCase().includes(searchTerm.toLowerCase()) || u.username.toLowerCase().includes(searchTerm.toLowerCase()));
+
+    const permissionList = [
+      { id: 'dashboard', label: 'ภาพรวมระบบ (Dashboard)' },
+      { id: 'activities', label: 'ร่วมกิจกรรมต่างๆ' },
+      { id: 'support', label: 'สนับสนุนกิจกรรม' },
+      { id: 'repairs', label: 'รับเรื่องร้องทุกข์' },
+      { id: 'budget', label: 'สรุปงบประมาณ' },
+      { id: 'water', label: 'จัดการน้ำดื่ม (ดูข้อมูล)' },
+      { id: 'water_add', label: 'จัดการน้ำดื่ม (เพิ่ม)' },
+      { id: 'water_edit', label: 'จัดการน้ำดื่ม (แก้ไข)' },
+      { id: 'water_delete', label: 'จัดการน้ำดื่ม (ลบ)' },
+      { id: 'uniform', label: 'จัดการเครื่องแบบ' },
+      { id: 'users', label: 'จัดการผู้ใช้งาน' },
+      { id: 'logs', label: 'Log ระบบ' }
+    ];
+
+    const openForm = (user = null) => {
+      if (user) {
+        setForm({ ...user, password: user.password }); 
+      } else {
+        setForm({ id: null, name: '', username: '', password: '', role: 'user', center: 'พังโคน', avatar: '', permissions: ['dashboard'] });
+      }
+      setIsFormOpen(true);
+    };
+
+    const togglePermission = (permId) => {
+      setForm(prev => {
+        const hasPerm = prev.permissions.includes(permId);
+        if (hasPerm) return { ...prev, permissions: prev.permissions.filter(p => p !== permId) };
+        return { ...prev, permissions: [...prev.permissions, permId] };
+      });
+    };
+
+    const saveUser = (e) => {
+      e.preventDefault();
+      const isNew = !form.id;
+      const newUserData = { ...form, id: form.id || Date.now() };
+      
+      if (isNew) {
+        if (users.find(u => u.username === form.username)) {
+          addToast('Username นี้ถูกใช้ไปแล้ว', 'error');
+          return;
+        }
+        setUsers([newUserData, ...users]);
+        addLog(currentUser, 'CREATE', 'USERS', `Created user: ${newUserData.username}`, null, newUserData);
+      } else {
+        setUsers(users.map(u => u.id === form.id ? newUserData : u));
+        const oldUser = users.find(u => u.id === form.id);
+        addLog(currentUser, 'UPDATE', 'USERS', `Updated user: ${newUserData.username}`, oldUser, newUserData);
+      }
+      
+      setIsFormOpen(false);
+      addToast(isNew ? 'เพิ่มผู้ใช้งานสำเร็จ' : 'แก้ไขผู้ใช้งานสำเร็จ', 'success');
+    };
+
+    const deleteUser = (id, username) => {
+      if (id === currentUser.id) {
+        addToast('ไม่สามารถลบบัญชีที่กำลังใช้งานได้', 'error');
+        return;
+      }
+      requestConfirm('ยืนยันการลบผู้ใช้', `ยืนยันการลบผู้ใช้ ${username}?`, () => {
+        const userToDelete = users.find(u => u.id === id);
+        setUsers(users.filter(u => u.id !== id));
+        addLog(currentUser, 'DELETE', 'USERS', `Deleted user: ${username}`, userToDelete, null);
+        addToast('ลบผู้ใช้สำเร็จ', 'info');
+      });
+    };
+
+    return (
+      <div className="space-y-4">
+        <div className="flex flex-col md:flex-row justify-between gap-4">
+          <div className="relative flex-1 max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+            <input 
+              type="text" 
+              placeholder="ค้นหาชื่อ หรือ Username..." 
+              className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
+          <button 
+            onClick={() => openForm()}
+            className="bg-[#1a3a8a] text-white px-4 py-2 rounded-lg flex items-center justify-center space-x-2 hover:bg-[#152e6e]"
+          >
+            <Plus size={18} />
+            <span>เพิ่มผู้ใช้งาน</span>
+          </button>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-x-auto">
+          <table className="w-full text-left">
+            <thead className="bg-gray-50 text-xs text-gray-500 uppercase">
+              <tr>
+                <th className="px-6 py-3">ผู้ใช้งาน</th>
+                <th className="px-6 py-3">Username</th>
+                <th className="px-6 py-3">บทบาท / ศูนย์</th>
+                <th className="px-6 py-3">สิทธิ์การใช้งาน</th>
+                <th className="px-6 py-3 text-right">จัดการ</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {filteredUsers.map(u => (
+                <tr key={u.id} className="hover:bg-gray-50">
+                  <td className="px-6 py-4 flex items-center space-x-3">
+                    {u.avatar ? (
+                      <img src={u.avatar} alt="avatar" className="w-8 h-8 rounded-full object-cover border border-gray-200 shadow-sm" />
+                    ) : (
+                      <div className="w-8 h-8 rounded-full bg-[#1a3a8a] text-white flex items-center justify-center">
+                        <UserCircle size={20} />
+                      </div>
+                    )}
+                    <span className="font-bold text-sm text-gray-800">{u.name}</span>
+                  </td>
+                  <td className="px-6 py-4 text-sm text-gray-600">{u.username}</td>
+                  <td className="px-6 py-4">
+                    <div className="text-sm font-bold">{u.role === 'admin' ? 'ผู้ดูแลระบบ' : 'ผู้ใช้งานทั่วไป'}</div>
+                    <div className="text-xs text-gray-500">{u.center}</div>
+                  </td>
+                  <td className="px-6 py-4 text-xs">
+                    <div className="flex flex-wrap gap-1 max-w-[250px]">
+                      {u.permissions.slice(0, 3).map(p => {
+                        const permLabel = permissionList.find(pl => pl.id === p)?.label || p;
+                        return <span key={p} className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full border">{permLabel}</span>;
+                      })}
+                      {u.permissions.length > 3 && (
+                        <span className="bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full border border-blue-100">+{u.permissions.length - 3}</span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 text-right space-x-2">
+                    <button onClick={() => openForm(u)} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded"><Edit2 size={16} /></button>
+                    <button onClick={() => deleteUser(u.id, u.username)} className="p-1.5 text-red-600 hover:bg-red-50 rounded"><Trash2 size={16} /></button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {isFormOpen && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200">
+              <div className="p-6 bg-[#1a3a8a] text-white flex justify-between items-center">
+                <h3 className="text-xl font-bold">{form.id ? 'แก้ไขผู้ใช้งาน' : 'เพิ่มผู้ใช้งานใหม่'}</h3>
+                <button onClick={() => setIsFormOpen(false)}><X size={24} /></button>
+              </div>
+              <form onSubmit={saveUser} className="p-6 space-y-6 max-h-[80vh] overflow-y-auto">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* General Info */}
+                  <div className="space-y-4">
+                    <h4 className="font-bold text-gray-800 border-b pb-2">ข้อมูลส่วนตัว</h4>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">รูปภาพประจำตัว (URL - ระบุหรือไม่ก็ได้)</label>
+                      <input type="text" className="w-full border p-2 rounded-lg" placeholder="https://..." value={form.avatar || ''} onChange={e => setForm({...form, avatar: e.target.value})} />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">ชื่อ - สกุล</label>
+                      <input type="text" required className="w-full border p-2 rounded-lg" value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Username</label>
+                      <input type="text" required className="w-full border p-2 rounded-lg" value={form.username} onChange={e => setForm({...form, username: e.target.value})} disabled={form.id && form.username === 'admin'} />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Password</label>
+                      <input type="text" required className="w-full border p-2 rounded-lg" value={form.password} onChange={e => setForm({...form, password: e.target.value})} />
+                    </div>
+                  </div>
+
+                  {/* System Role */}
+                  <div className="space-y-4">
+                    <h4 className="font-bold text-gray-800 border-b pb-2">สิทธิ์ในระบบ</h4>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium mb-1">บทบาท</label>
+                        <select className="w-full border p-2 rounded-lg" value={form.role} onChange={e => {
+                          const role = e.target.value;
+                          setForm({...form, role, permissions: role === 'admin' ? permissionList.map(p => p.id) : form.permissions});
+                        }} disabled={form.id && form.username === 'admin'}>
+                          <option value="user">User</option>
+                          <option value="admin">Admin</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium mb-1">ศูนย์ประสานงาน</label>
+                        <select className="w-full border p-2 rounded-lg" value={form.center} onChange={e => setForm({...form, center: e.target.value})}>
+                          <option value="ศูนย์กลาง">ศูนย์กลาง</option>
+                          <option value="พังโคน">พังโคน</option>
+                          <option value="เจริญศิลป์">เจริญศิลป์</option>
+                          <option value="วานรนิวาส">วานรนิวาส</option>
+                        </select>
+                      </div>
+                    </div>
+                    
+                    <div>
+                      <label className="block text-sm font-medium mb-2">สิทธิ์การมองเห็นเมนูต่างๆ (เลือกได้หลายข้อ)</label>
+                      <div className="bg-gray-50 border rounded-lg p-3 grid grid-cols-1 sm:grid-cols-2 gap-2 h-40 overflow-y-auto">
+                        {permissionList.map(perm => (
+                          <label key={perm.id} className="flex items-center space-x-2 text-sm cursor-pointer hover:bg-gray-100 p-1 rounded">
+                            <input 
+                              type="checkbox" 
+                              className="rounded text-blue-600 focus:ring-blue-500" 
+                              checked={form.permissions.includes(perm.id)}
+                              onChange={() => togglePermission(perm.id)}
+                            />
+                            <span>{perm.label}</span>
+                          </label>
+                        ))}
+                      </div>
+                      {form.permissions.length === 0 && <span className="text-xs text-red-500 mt-1 block">* กรุณาเลือกอย่างน้อย 1 สิทธิ์</span>}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pt-4 flex justify-end space-x-3 border-t">
+                  <button type="button" onClick={() => setIsFormOpen(false)} className="px-6 py-2 rounded-lg border hover:bg-gray-50">ยกเลิก</button>
+                  <button type="submit" disabled={form.permissions.length === 0} className="px-6 py-2 rounded-lg bg-[#1a3a8a] text-white hover:bg-[#152e6e] disabled:bg-gray-400">บันทึกข้อมูล</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const LogsView = () => {
+    const [selectedLog, setSelectedLog] = useState(null);
+    return (
+      <div className="space-y-4">
+        <div className="flex justify-between items-center">
+          <h3 className="text-xl font-bold text-[#1a3a8a]">ประวัติบันทึก Log ระบบ</h3>
+          <button onClick={() => window.print()} className="bg-white border text-gray-600 px-3 py-2 rounded-lg text-sm flex items-center space-x-2 hover:bg-gray-50">
+            <Download size={16} /> <span>Export PDF</span>
+          </button>
+        </div>
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <table className="w-full text-left">
+            <thead className="bg-gray-50 text-xs text-gray-500 uppercase">
+              <tr>
+                <th className="px-6 py-3">วันเวลา</th>
+                <th className="px-6 py-3">ผู้ใช้งาน</th>
+                <th className="px-6 py-3">โมดูล/การกระทำ</th>
+                <th className="px-6 py-3">รายละเอียด</th>
+                <th className="px-6 py-3 text-right">ดู</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {logs.map(log => (
+                <tr key={log.id} className="hover:bg-gray-50">
+                  <td className="px-6 py-4 text-xs whitespace-nowrap">{formatDateTime(log.timestamp)}</td>
+                  <td className="px-6 py-4 text-sm font-medium">{log.user}</td>
+                  <td className="px-6 py-4 text-xs">
+                    <span className="bg-gray-100 px-2 py-0.5 rounded mr-1 font-bold">{log.module}</span>
+                    <span className={`px-2 py-0.5 rounded text-white ${log.action === 'DELETE' ? 'bg-red-500' : log.action === 'CREATE' ? 'bg-green-500' : log.action === 'UPDATE' ? 'bg-blue-500' : 'bg-gray-400'}`}>
+                      {log.action}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 text-sm truncate max-w-xs">{log.detail}</td>
+                  <td className="px-6 py-4 text-right">
+                    <button onClick={() => setSelectedLog(log)} className="text-blue-600 hover:bg-blue-50 p-1 rounded"><Eye size={16} /></button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {selectedLog && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl">
+              <div className="p-6 bg-[#1a3a8a] text-white flex justify-between items-center">
+                <h3 className="text-lg font-bold">รายละเอียดบันทึก</h3>
+                <button onClick={() => setSelectedLog(null)}><X size={24} /></button>
+              </div>
+              <div className="p-6 space-y-4">
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div><span className="text-gray-500">ผู้ใช้งาน:</span> {selectedLog.user}</div>
+                  <div><span className="text-gray-500">วันเวลา:</span> {formatDateTime(selectedLog.timestamp)}</div>
+                  <div><span className="text-gray-500">โมดูล:</span> {selectedLog.module}</div>
+                  <div><span className="text-gray-500">การกระทำ:</span> {selectedLog.action}</div>
+                </div>
+                <div className="mt-4">
+                  <span className="text-sm font-bold block mb-2">เปรียบเทียบข้อมูล:</span>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="p-3 bg-gray-50 rounded-lg border overflow-auto max-h-40">
+                      <p className="text-xs font-bold text-gray-400 mb-1">ข้อมูลเก่า (Before)</p>
+                      <pre className="text-[10px]">{JSON.stringify(selectedLog.before, null, 2) || '-'}</pre>
+                    </div>
+                    <div className="p-3 bg-blue-50 rounded-lg border border-blue-100 overflow-auto max-h-40">
+                      <p className="text-xs font-bold text-blue-400 mb-1">ข้อมูลใหม่ (After)</p>
+                      <pre className="text-[10px]">{JSON.stringify(selectedLog.after, null, 2) || '-'}</pre>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // --- Auth Render ---
+  if (!currentUser) {
+    return (
+      <div className="min-h-screen bg-[#f3f4f6] flex items-center justify-center p-4" style={{ fontFamily: 'Sarabun, sans-serif' }}>
+        <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden border border-gray-100">
+          <div className="p-10 bg-gradient-to-br from-[#1a3a8a] to-[#152e6e] text-center text-white">
+            <div className="w-20 h-20 bg-[#d4a843] rounded-3xl mx-auto mb-4 flex items-center justify-center rotate-12 shadow-lg">
+              <LayoutDashboard size={40} />
+            </div>
+            <h1 className="text-2xl font-black tracking-tight mb-2">Coordination Center</h1>
+            <p className="text-white/60 text-sm">ระบบจัดการศูนย์ประสานงานสารสนเทศ</p>
+          </div>
+          <form onSubmit={handleLogin} className="p-10 space-y-6">
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-1">Username</label>
+                <div className="relative">
+                  <Users className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                  <input 
+                    type="text" 
+                    required
+                    className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#1a3a8a] outline-none transition"
+                    placeholder="ระบุชื่อผู้ใช้"
+                    value={authForm.username}
+                    onChange={(e) => setAuthForm({ ...authForm, username: e.target.value })}
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-1">Password</label>
+                <div className="relative">
+                  <ClipboardList className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                  <input 
+                    type="password" 
+                    required
+                    className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#1a3a8a] outline-none transition"
+                    placeholder="••••••••"
+                    value={authForm.password}
+                    onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })}
+                  />
+                </div>
+              </div>
+            </div>
+            <button 
+              type="submit" 
+              className="w-full bg-[#1a3a8a] text-white py-3 rounded-xl font-bold hover:bg-[#152e6e] transition shadow-lg active:scale-[0.98]"
+            >
+              เข้าสู่ระบบ
+            </button>
+            <div className="text-center text-xs text-gray-400 mt-4 flex flex-col gap-1">
+              <span>© 2024 Coordination Center Management System</span>
+              <span className="opacity-50">Version {APP_VERSION}</span>
+            </div>
+          </form>
+        </div>
+        {toasts.map(t => (
+          <div key={t.id} className={`fixed bottom-4 right-4 px-6 py-3 rounded-xl text-white shadow-xl animate-bounce ${t.type === 'error' ? 'bg-red-500' : 'bg-green-500'}`}>
+            {t.msg}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // --- Main Layout Render ---
+  return (
+    <div className="min-h-screen bg-[#f3f4f6] flex" style={{ fontFamily: 'Sarabun, sans-serif' }}>
+      {/* Sidebar */}
+      <aside className={`fixed inset-y-0 left-0 z-40 w-64 bg-gradient-to-b from-[#1a3a8a] to-[#0a1e4d] shadow-2xl transition-transform lg:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div className="h-full flex flex-col">
+          <div className="p-6 flex items-center space-x-3 text-white border-b border-white/10">
+            <div className="bg-[#d4a843] p-2 rounded-xl text-navy">
+              <LayoutDashboard size={24} />
+            </div>
+            <span className="text-lg font-black tracking-tight">Coord Center</span>
+          </div>
+          
+          <nav className="flex-1 overflow-y-auto pt-4 no-scrollbar">
+            <SidebarItem icon={LayoutDashboard} label="Dashboard" view="dashboard" permission="dashboard" />
+            <SidebarItem icon={Calendar} label="ร่วมกิจกรรมต่างๆ" view="activities" permission="activities" />
+            <SidebarItem icon={HeartHandshake} label="สนับสนุนกิจกรรม" view="support" permission="support" />
+            <SidebarItem icon={Wrench} label="รับเรื่องร้องทุกข์" view="repairs" permission="repairs" />
+            <SidebarItem icon={PieChart} label="สรุปงบประมาณ" view="budget" permission="budget" />
+            <SidebarItem icon={Droplets} label="จัดการน้ำดื่ม" view="water" permission="water" />
+            <SidebarItem icon={Shirt} label="จัดการเครื่องแบบ" view="uniform" permission="uniform" />
+            <div className="mt-4 pt-4 border-t border-white/10">
+              <SidebarItem icon={Users} label="จัดการผู้ใช้งาน" view="users" permission="users" />
+              <SidebarItem icon={ClipboardList} label="Log ระบบ" view="logs" permission="logs" />
+            </div>
+          </nav>
+          
+          <div className="p-4 bg-black/20 text-white/50 text-xs">
+            ล็อคอินโดย: {currentUser.name} ({currentUser.center})
+          </div>
+          <button onClick={handleLogout} className="m-4 flex items-center justify-center space-x-2 bg-red-500/10 text-red-400 py-3 rounded-xl hover:bg-red-500 hover:text-white transition">
+            <LogOut size={18} />
+            <span className="font-bold">ออกจากระบบ</span>
+          </button>
+          <div className="text-center text-[10px] text-white/30 pb-4">
+            Version {APP_VERSION}
+          </div>
+        </div>
+      </aside>
+
+      {/* Main Content */}
+      <main className={`flex-1 flex flex-col min-w-0 transition-all duration-300 ${isSidebarOpen ? 'lg:ml-64' : 'ml-0'}`}>
+        {/* Header */}
+        <header className="h-16 bg-white shadow-sm border-b border-gray-100 flex items-center justify-between px-4 lg:px-8 sticky top-0 z-30">
+          <div className="flex items-center space-x-4">
+            <button onClick={() => setSidebarOpen(!isSidebarOpen)} className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg">
+              {isSidebarOpen ? <X size={20} /> : <Menu size={20} />}
+            </button>
+            <h2 className="text-xl font-bold text-[#1a3a8a] hidden sm:block">
+              {currentView === 'dashboard' && 'ภาพรวมระบบ'}
+              {currentView === 'activities' && 'การเข้าร่วมกิจกรรม'}
+              {currentView === 'support' && 'การสนับสนุนกิจกรรม'}
+              {currentView === 'repairs' && 'รับเรื่องร้องทุกข์'}
+              {currentView === 'budget' && 'สรุปงบประมาณ'}
+              {currentView === 'water' && 'คลังน้ำดื่ม'}
+              {currentView === 'uniform' && 'คลังเครื่องแบบ'}
+              {currentView === 'users' && 'จัดการผู้ใช้งาน'}
+              {currentView === 'logs' && 'Log ระบบ'}
+            </h2>
+          </div>
+          <div className="flex items-center space-x-3">
+             <div className="text-right hidden sm:block">
+               <p className="text-sm font-bold text-gray-800">{currentUser.name}</p>
+               <p className="text-[10px] font-bold text-[#d4a843] uppercase tracking-widest">{currentUser.center}</p>
+             </div>
+             <div className="w-10 h-10 bg-[#1a3a8a] rounded-xl flex items-center justify-center text-white shadow-md border-2 border-[#d4a843] overflow-hidden">
+               {currentUser.avatar ? <img src={currentUser.avatar} alt="avatar" className="w-full h-full object-cover" /> : <UserCircle size={28} />}
+             </div>
+          </div>
+        </header>
+
+        {/* Content Area */}
+        <div className="p-4 lg:p-8 overflow-y-auto flex-1">
+           {currentView === 'dashboard' && <DashboardView />}
+           {currentView === 'activities' && <ActivitiesView />}
+           {currentView === 'support' && <SupportView />}
+           {currentView === 'repairs' && <RepairsView />}
+           {currentView === 'budget' && <BudgetView />}
+           {currentView === 'water' && <WaterView />}
+           {currentView === 'uniform' && <UniformView />}
+           {currentView === 'users' && <UsersView />}
+           {currentView === 'logs' && <LogsView />}
+        </div>
+      </main>
+
+      {/* Toast Notification Container */}
+      <div className="fixed top-20 right-4 z-[60] flex flex-col space-y-2">
+        {toasts.map(t => (
+          <div key={t.id} className={`flex items-center space-x-3 px-4 py-3 rounded-xl shadow-lg border-l-4 animate-in slide-in-from-right ${
+            t.type === 'success' ? 'bg-white border-green-500 text-green-700' : 
+            t.type === 'error' ? 'bg-white border-red-500 text-red-700' : 'bg-white border-blue-500 text-blue-700'
+          }`}>
+            <Bell size={18} />
+            <span className="font-medium text-sm">{t.msg}</span>
+          </div>
+        ))}
+      </div>
+      
+      {/* Confirm Dialog Modal */}
+      {confirmDialog.isOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[300] p-4">
+          <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200">
+            <div className="p-6">
+              <h3 className="text-xl font-bold text-gray-800 mb-2">{confirmDialog.title}</h3>
+              <p className="text-gray-600 text-sm">{confirmDialog.message}</p>
+            </div>
+            <div className="px-6 py-4 bg-gray-50 flex justify-end space-x-3 border-t">
+              <button onClick={() => setConfirmDialog({ ...confirmDialog, isOpen: false })} className="px-4 py-2 rounded-lg border bg-white text-gray-700 hover:bg-gray-100 transition-colors">ยกเลิก</button>
+              <button onClick={() => { confirmDialog.onConfirm(); setConfirmDialog({ ...confirmDialog, isOpen: false }); }} className="px-4 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700 font-bold transition-colors">ยืนยัน</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Footer for Print Hidden */}
+      <div className="hidden print:block fixed inset-0 bg-white z-[100] p-10">
+          <h1 className="text-2xl font-bold border-b pb-4 mb-4">รายงานสรุปข้อมูลศูนย์ประสานงาน</h1>
+          <p>จัดทำโดย: {currentUser.name}</p>
+          <p>วันที่พิมพ์: {new Date().toLocaleDateString('th-TH')}</p>
+          <div className="mt-8 border p-4 rounded text-center italic">ส่วนนี้สำหรับพิมพ์รายละเอียดที่เลือก</div>
+      </div>
+      
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;700;800&display=swap');
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .custom-district-label { background: none; border: none; }
+        .custom-district-label div { background-color: white; color: #111; padding: 4px 10px; border-radius: 8px; font-family: 'Sarabun', sans-serif; font-weight: 800; font-size: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); text-align: center; border: 1px solid #ddd; white-space: nowrap; }
+        .map-link-custom { color: #3b82f6; text-decoration: none; display: flex; align-items: center; font-weight: 500; font-size: 11px; transition: color 0.2s; }
+        .map-link-custom:hover { color: #1d4ed8 !important; text-decoration: underline !important; }
+        @media print {
+          body * { visibility: hidden; }
+          .print\:block, .print\:block * { visibility: visible; }
+          .print\:block { position: absolute; left: 0; top: 0; width: 100%; }
+        }
+      `}</style>
+    </div>
+  );
+}
